@@ -16,9 +16,10 @@ from .handlers import (recover_missing_from_backup, verify_block_duration,
                        diagnose_block_duration)
 
 
-def pick_table_for_assembly(xlsx_dir: Path, ddmmyy: str, log) -> Path:
+def pick_table_for_assembly(xlsx_dir: Path, ddmmyy: str, log,
+                             interactive: bool = True) -> Path:
     """1) Траффик-лист_* за дату -> берём.
-       2) нет траффика, но есть другой xlsx -> предупреждаем, спрашиваем y/n.
+       2) нет траффика, но есть другой xlsx -> предупреждаем, спрашиваем y/n (или авто-берём).
        3) ничего -> ошибка."""
     candidates = find_xlsx_for_date(xlsx_dir, ddmmyy)
     if not candidates:
@@ -30,10 +31,14 @@ def pick_table_for_assembly(xlsx_dir: Path, ddmmyy: str, log) -> Path:
     other = candidates[0]
     print(f"[!] Типичная таблица 'Траффик-лист_*' на {ddmmyy} не найдена.")
     print(f"    Найден нетипичный файл: {other.name}")
-    try:
-        ans = input("    Использовать его для сборки? (y/n): ").strip().lower()
-    except EOFError:
-        ans = "n"
+    if interactive:
+        try:
+            ans = input("    Использовать его для сборки? (y/n): ").strip().lower()
+        except EOFError:
+            ans = "n"
+    else:
+        print("    Используется автоматически (запущено без --manual).")
+        ans = "y"
     if ans in ("y", "yes", "д", "да"):
         log.log(f"[!] ВНИМАНИЕ: используется НЕТИПИЧНЫЙ файл {other.name}", to_console=False)
         return other
@@ -44,7 +49,7 @@ def pick_table_for_assembly(xlsx_dir: Path, ddmmyy: str, log) -> Path:
 
 
 def run_dry_check(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
-                  dst_root: Path, log) -> int:
+                  dst_root: Path, log, interactive: bool = True) -> int:
     """DRY-RUN: все проверки без единого перекода и без записи файлов.
     Показывает, пойдёт ли смена в сборку."""
     print(f"\n=== ПРОВЕРКА (dry-run) на {ddmmyy} ===\n")
@@ -77,7 +82,7 @@ def run_dry_check(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
 
     # таблица
     try:
-        table = pick_table_for_assembly(xlsx_dir, ddmmyy, log)
+        table = pick_table_for_assembly(xlsx_dir, ddmmyy, log, interactive=interactive)
         print(f"Таблица: {table.name}")
         blocks = parse_blocks(table)
         print(f"Блоков: {len(blocks)}")
@@ -180,7 +185,7 @@ def run_dry_check(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
 
 
 def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
-                  dst_root: Path, log) -> int:
+                  dst_root: Path, log, interactive: bool = True) -> int:
     # инструменты
     ffmpeg = _resolve_tool("ffmpeg", conf["ffmpeg"])
     ffprobe = _resolve_tool("ffprobe", conf["ffprobe"])
@@ -212,7 +217,7 @@ def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
                 handler=3, payload={"file": str(w)})
 
     # таблица
-    table = pick_table_for_assembly(xlsx_dir, ddmmyy, log)
+    table = pick_table_for_assembly(xlsx_dir, ddmmyy, log, interactive=interactive)
     log.log(f"Таблица: {table.name}")
     blocks = parse_blocks(table)
     log.log(f"Блоков: {len(blocks)}")
@@ -292,10 +297,14 @@ def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
             print(_red(f"  {f.name}: дорожки/каналы = {chans}"))
             log.log(f"[ОБРАБОТЧИК 3] нестандартное аудио: {f.name} (каналы {chans})",
                     to_console=False)
-        try:
-            ans = input("Сконвертировать все к эфирному формату (2 моно 24/48)? (y/n): ").strip().lower()
-        except EOFError:
-            ans = "n"
+        if interactive:
+            try:
+                ans = input("Сконвертировать все к эфирному формату (2 моно 24/48)? (y/n): ").strip().lower()
+            except EOFError:
+                ans = "n"
+        else:
+            print("Авто-конвертация (запущено без --manual).")
+            ans = "y"
         if ans not in ("y", "yes", "д", "да"):
             raise AssemblyError(
                 "Сборка отменена: есть файлы с нестандартным аудио, "
@@ -387,7 +396,7 @@ def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
                     fresh = b
                 diagnose_block_duration(fresh, src_dir, ffprobe, log)
                 failed_blocks.append((b["time"], res["out_name"], res["exp"], res["got"]))
-                if not ask_continue_after_error():
+                if not (ask_continue_after_error() if interactive else True):
                     log.log("")
                     log.log("Сборка остановлена пользователем после ошибки хронометража.")
                     print("\nСборка остановлена.")

@@ -18,12 +18,14 @@ from .auto import run_auto_mode, run_dry_check
 def main() -> int:
     conf = load_conf()
     ap = argparse.ArgumentParser(description="Сбор роликов .mxf по ID из траффик-листов.")
-    ap.add_argument("--date", help="дата ДДММГГ (по умолчанию спросит, дефолт — завтра)")
+    ap.add_argument("--date", help="дата ДДММГГ (по умолчанию — завтра)")
     ap.add_argument("--mode", choices=["manual", "auto"],
                     help="режим: manual (копирование) | auto (сборка эфира). "
-                         "Без флага — спросит.")
+                         "Без флага — авто (или спросит при --manual).")
     ap.add_argument("--check", action="store_true",
                     help="dry-run: проверить смену без сборки и перекодов.")
+    ap.add_argument("--manual", action="store_true",
+                    help="интерактивный режим: спрашивает дату, режим и прочие вопросы.")
     ap.add_argument("--xlsx", default=conf["xlsx"])
     ap.add_argument("--src", default=conf["src"])
     ap.add_argument("--dst", default=conf["dst"])
@@ -39,19 +41,25 @@ def main() -> int:
         except ValueError as e:
             print(f"[!] Некорректная дата в --date: {e}")
             return 1
-    else:
+    elif args.manual:
         ddmmyy = ask_date()
+    else:
+        tomorrow = dt.date.today() + dt.timedelta(days=1)
+        ddmmyy = tomorrow.strftime("%d%m%y")
 
     xlsx_dir = Path(args.xlsx)
     src_dir = Path(args.src)
     dst_root = Path(args.dst)
 
-    # режим
     # режим (при --check режим не спрашиваем — это всегда проверка авто-сборки)
     if args.check:
         mode = "auto"
+    elif args.mode:
+        mode = args.mode
+    elif args.manual:
+        mode = ask_mode()
     else:
-        mode = args.mode if args.mode else ask_mode()
+        mode = "auto"
 
     log.log(f"=== Сбор роликов на {ddmmyy} (режим: {mode}) ===")
     log.log(f"Запуск: {dt.datetime.now():%Y-%m-%d %H:%M:%S}")
@@ -69,7 +77,8 @@ def main() -> int:
     # ===== DRY-RUN (проверка без сборки) =====
     if args.check:
         try:
-            rc = run_dry_check(conf, ddmmyy, xlsx_dir, src_dir, dst_root, log)
+            rc = run_dry_check(conf, ddmmyy, xlsx_dir, src_dir, dst_root, log,
+                               interactive=args.manual)
         except AssemblyError as e:
             log.log(f"[ОШИБКА] {e}")
             print(_red(f"[ОШИБКА] {e}"))
@@ -81,7 +90,8 @@ def main() -> int:
     # ===== АВТО-РЕЖИМ =====
     if mode == "auto":
         try:
-            rc = run_auto_mode(conf, ddmmyy, xlsx_dir, src_dir, dst_root, log)
+            rc = run_auto_mode(conf, ddmmyy, xlsx_dir, src_dir, dst_root, log,
+                               interactive=args.manual)
         except AssemblyError as e:
             log.log("")
             log.log(f"[ОШИБКА] {e}")
@@ -166,11 +176,14 @@ def main() -> int:
         msg = f"Успешно скопировано {len(copied_files)} файлов, ошибок не найдено."
     log.log(msg)
 
-    # --- копирование итогового списка ID в буфер обмена ---
+    # --- копирование итогового списка ID в буфер обмена (только в --manual) ---
     print()
-    try:
-        ans = input("Скопировать итоговый список в буфер обмена? (y/n): ").strip().lower()
-    except EOFError:
+    if args.manual:
+        try:
+            ans = input("Скопировать итоговый список в буфер обмена? (y/n): ").strip().lower()
+        except EOFError:
+            ans = "n"
+    else:
         ans = "n"
     if ans in ("y", "yes", "д", "да"):
         source = xlsx_files[0]  # читаем одну таблицу (первая по алфавиту)
