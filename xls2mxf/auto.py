@@ -2,7 +2,7 @@
 import os
 from pathlib import Path
 
-from .constants import FPS, EXT
+from .constants import FPS, EXT, FORMAT_EXT
 from .errors import AssemblyError
 from .config import app_dir
 from .ui import Logger, Progress, _red, ask_continue_after_error
@@ -200,6 +200,11 @@ def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
 
     audio_layout = "stereo" if conf["audio_layout"] == "stereo" else "2mono"
     video_mode = "reencode" if conf["video_mode"] == "reencode" else "copy"
+    out_format = conf.get("output_format", "mxf")
+    if out_format not in FORMAT_EXT:
+        log.log(f"[!] Неизвестный output_format {out_format!r}, используется mxf.")
+        out_format = "mxf"
+    out_ext = FORMAT_EXT[out_format]
 
     # длительности обёрток (один раз)
     d_open = get_duration(opener, ffprobe)
@@ -262,11 +267,18 @@ def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
     out_dir = out_base / f"эфир на {ddmmyy}"
     out_dir.mkdir(parents=True, exist_ok=True)
     log.log(f"Папка вывода: {out_dir.resolve()}")
+
+    # база для временных файлов (norm_NNN.mxf, audiofix)
+    _td = conf.get("temp_dir", "").strip()
+    tmp_base = (Path(_td) / ddmmyy) if _td else out_dir
+    if _td:
+        tmp_base.mkdir(parents=True, exist_ok=True)
+        log.log(f"Папка temp:   {tmp_base.resolve()}")
     log.log("")
 
     # ОБРАБОТЧИК 3: единый аудио-проход по всем уникальным роликам ДО сборки.
     # none -> критическая остановка; fixable -> копим, спрашиваем один раз, чиним.
-    audiofix_dir = out_dir / "_audiofix"
+    audiofix_dir = tmp_base / "_audiofix"
     fix_map = {}            # {исходный путь -> путь исправленного файла}
     layout_cache = {}       # {путь -> раскладка} чтобы не probe-ить повторно
     unique_ids = []
@@ -343,7 +355,7 @@ def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
         """Собирает один блок. Возвращает dict с результатом.
         Не задаёт вопросов — годится и для параллельного, и для последовательного."""
         tpart = time_to_filepart(b["time"])
-        out_name = f"{date_part}_{conf['middle']}_{tpart}{EXT}"
+        out_name = f"{date_part}_{conf['middle']}_{tpart}{out_ext}"
         out_path = out_dir / out_name
 
         roller_paths = []
@@ -362,12 +374,14 @@ def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
 
         tmp_files = []
         # уникальная temp-подпапка на блок (важно для параллельности — не пересекаться)
-        block_tmp = out_dir / "_tmp" / tpart
+        block_tmp = tmp_base / "_tmp" / tpart
         if video_mode == "reencode":
-            assemble_block_reencode(inputs, layouts, out_path, ffmpeg, audio_layout, log)
+            assemble_block_reencode(inputs, layouts, out_path, ffmpeg, audio_layout, log,
+                                    out_format=out_format)
         else:
             tmp_files = assemble_block_copy(inputs, layouts, out_path, ffmpeg,
-                                            audio_layout, block_tmp, log)
+                                            audio_layout, block_tmp, log,
+                                            out_format=out_format)
 
         ok, exp_f, got_f = verify_block_duration(out_path, b["itogo"], d_open, d_close, ffprobe)
         return {"block": b, "out_name": out_name, "ok": ok,
@@ -434,7 +448,7 @@ def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
             except AssemblyError as e:
                 return {"block": b, "error": str(e),
                         "out_name": f"{date_part}_{conf['middle']}_"
-                                    f"{time_to_filepart(b['time'])}{EXT}"}
+                                    f"{time_to_filepart(b['time'])}{out_ext}"}
 
         with ThreadPoolExecutor(max_workers=workers) as ex:
             futures = {ex.submit(worker, b): b for b in blocks}
@@ -470,18 +484,23 @@ def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
                 built += 1
 
     # подчистить _tmp
-    tmp_root = out_dir / "_tmp"
+    import shutil as _sh
+    tmp_root = tmp_base / "_tmp"
     if tmp_root.exists():
-        import shutil as _sh
         try:
             _sh.rmtree(tmp_root, ignore_errors=True)
         except OSError:
             pass
     # подчистить _audiofix при полном успехе
     if not failed_blocks and fix_map:
-        import shutil as _sh
         try:
             _sh.rmtree(audiofix_dir, ignore_errors=True)
+        except OSError:
+            pass
+    # если использовали внешний temp_dir и он теперь пуст — убрать подпапку даты
+    if _td:
+        try:
+            tmp_base.rmdir()
         except OSError:
             pass
 

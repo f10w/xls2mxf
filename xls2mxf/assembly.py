@@ -1,9 +1,41 @@
 """Сборка блоков через ffmpeg и перекоды (аудио-фикс, AVI->XDCAM)."""
 from pathlib import Path
 
-from .constants import FPS, EXT
+from .constants import FPS
 from .errors import AssemblyError
 from .ffmpeg_tools import _run_ffmpeg
+
+# Кодеки и контейнер для финального выходного файла по формату.
+# enc_v / enc_a  — аргументы при reencode-режиме и при финальном concat в copy-режиме.
+# copy_final     — если True, финальный concat использует -c copy; иначе — enc_v + enc_a.
+_FMT: dict = {
+    "mxf": dict(
+        enc_v=["-c:v", "mpeg2video", "-b:v", "50M", "-minrate", "50M", "-maxrate", "50M",
+               "-bufsize", "17825792", "-flags", "+ilme+ildct", "-top", "1",
+               "-pix_fmt", "yuv422p", "-aspect", "16:9", "-r", str(FPS)],
+        enc_a=["-c:a", "pcm_s24le", "-ar", "48000"],
+        f_arg=["-f", "mxf"],
+        copy_final=True,
+    ),
+    "mp4": dict(
+        enc_v=["-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p"],
+        enc_a=["-c:a", "aac", "-b:a", "192k", "-ar", "48000"],
+        f_arg=["-movflags", "+faststart"],
+        copy_final=False,  # mpeg2→mp4 без перекода не работает
+    ),
+    "avi": dict(
+        enc_v=["-c:v", "mpeg2video", "-b:v", "50M", "-minrate", "50M", "-maxrate", "50M",
+               "-bufsize", "17825792", "-flags", "+ilme+ildct", "-top", "1",
+               "-pix_fmt", "yuv422p", "-aspect", "16:9", "-r", str(FPS)],
+        enc_a=["-c:a", "pcm_s24le", "-ar", "48000"],
+        f_arg=[],
+        copy_final=True,  # mpeg2+pcm в AVI — копируем как есть
+    ),
+}
+
+
+def _fmt(out_format: str) -> dict:
+    return _FMT.get(out_format, _FMT["mxf"])
 
 
 def _audio_filter_for_input(layout: str, target: str, in_index: int):
@@ -32,10 +64,16 @@ def _audio_filter_for_input(layout: str, target: str, in_index: int):
 def build_concat_demuxer_list(files: list, list_path: Path):
     """Пишет файл-список для concat demuxer.
     Пути абсолютные: concat demuxer трактует относительные пути относительно
-    расположения самого list-файла, что ломается при вложенных папках."""
+    расположения самого list-файла, что ломается при вложенных папках.
+    На Windows используем прямые слеши: ffmpeg их принимает, и UNC-пути вида
+    \\\\server\\share\\... превращаются в //server/share/... без риска
+    потерять ведущий слеш при парсинге concat-листа."""
+    import os
     lines = []
     for f in files:
         ap = str(Path(f).resolve())
+        if os.name == "nt":
+            ap = ap.replace("\\", "/")
         # экранирование одинарных кавычек по правилам ffmpeg concat
         p = ap.replace("'", "'\\''")
         lines.append(f"file '{p}'")
@@ -44,17 +82,16 @@ def build_concat_demuxer_list(files: list, list_path: Path):
 
 
 def assemble_block_reencode(inputs: list, layouts: list, out_path: Path,
-                            ffmpeg: str, audio_layout: str, log) -> None:
+                            ffmpeg: str, audio_layout: str, log,
+                            out_format: str = "mxf") -> None:
     """Один проход: concat-фильтр, видео и аудио перекодируются.
     inputs — полный список файлов (opener + ролики + closer)."""
-    import subprocess
     cmd = [ffmpeg, "-y"]
     for f in inputs:
         cmd += ["-i", str(f)]
 
     n = len(inputs)
     filt = []
-    concat_inputs = []
     # видео-сегменты
     for i in range(n):
         filt.append(f"[{i}:v:0]setsar=1[v{i}]")
@@ -82,12 +119,8 @@ def assemble_block_reencode(inputs: list, layouts: list, out_path: Path,
         cmd += ["-filter_complex", ";".join(filt),
                 "-map", "[vout]", "-map", "[aout]"]
 
-    # кодеки: XDCAM HD422 50M, PCM 24-bit
-    cmd += ["-c:v", "mpeg2video", "-b:v", "50M", "-minrate", "50M", "-maxrate", "50M",
-            "-bufsize", "17825792", "-flags", "+ilme+ildct", "-top", "1",
-            "-pix_fmt", "yuv422p", "-aspect", "16:9", "-r", str(FPS),
-            "-c:a", "pcm_s24le", "-ar", "48000",
-            "-f", "mxf", str(out_path)]
+    fmt = _fmt(out_format)
+    cmd += fmt["enc_v"] + fmt["enc_a"] + fmt["f_arg"] + [str(out_path)]
     _run_ffmpeg(cmd, ffmpeg, out_path, log)
 
 
@@ -99,11 +132,12 @@ def _lbl(s: str) -> str:
 
 
 def assemble_block_copy(inputs: list, layouts: list, out_path: Path,
-                        ffmpeg: str, audio_layout: str, tmp_dir: Path, log) -> list:
-    """Двухпроходно: каждый вход -> временный mxf с видео COPY и аудио,
-    приведённым к целевой раскладке; затем concat demuxer с -c copy.
+                        ffmpeg: str, audio_layout: str, tmp_dir: Path, log,
+                        out_format: str = "mxf") -> list:
+    """Двухпроходно: каждый вход -> временный MXF с видео COPY и аудио,
+    приведённым к целевой раскладке; затем concat demuxer в финальный формат.
+    Для MP4 финальный шаг перекодирует видео в H.264 + AAC.
     Возвращает список временных файлов для последующей очистки."""
-    import subprocess
     tmp_dir.mkdir(parents=True, exist_ok=True)
     normalized = []
     tmp_files = []
@@ -134,15 +168,19 @@ def assemble_block_copy(inputs: list, layouts: list, out_path: Path,
         _run_ffmpeg(cmd, ffmpeg, tmpf, log)
         normalized.append(tmpf)
 
-    # concat demuxer с copy. ВАЖНО: concat demuxer без явного -map берёт только
-    # ОДНУ дорожку каждого типа, теряя вторую моно. Поэтому маппим явно.
+    # concat demuxer. ВАЖНО: без явного -map берёт только ОДНУ дорожку каждого
+    # типа, теряя вторую моно. Поэтому маппим явно.
     list_path = tmp_dir / "concat_list.txt"
     build_concat_demuxer_list(normalized, list_path)
     cmd = [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(list_path),
            "-map", "0:v:0", "-map", "0:a:0"]
     if audio_layout == "2mono":
         cmd += ["-map", "0:a:1"]
-    cmd += ["-c", "copy", "-f", "mxf", str(out_path)]
+    fmt = _fmt(out_format)
+    if fmt["copy_final"]:
+        cmd += ["-c", "copy"] + fmt["f_arg"] + [str(out_path)]
+    else:
+        cmd += fmt["enc_v"] + fmt["enc_a"] + fmt["f_arg"] + [str(out_path)]
     _run_ffmpeg(cmd, ffmpeg, out_path, log)
     tmp_files.append(list_path)
     return tmp_files

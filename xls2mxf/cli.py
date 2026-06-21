@@ -336,6 +336,15 @@ def _run_doctor(conf: dict) -> int:
     except (ValueError, TypeError):
         _fail("workers", f"некорректное значение: {conf.get('workers')!r}")
 
+    td = conf.get("temp_dir", "")
+    if td:
+        if Path(td).is_dir():
+            _ok("temp_dir", str(Path(td).resolve()))
+        else:
+            _fail("temp_dir", f"папка не найдена: {td!r}")
+    else:
+        _info("temp_dir", "не задан (temp создаётся рядом с выходными файлами)")
+
     bs = conf.get("backup_source", "")
     if bs:
         if Path(bs).is_dir():

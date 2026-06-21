@@ -58,6 +58,8 @@ def load_conf() -> dict:
         "output_dir": a.get("output_dir", "").strip(),
         "video_mode": a.get("video_mode", "copy").strip().lower(),
         "audio_layout": a.get("audio_layout", "2mono").strip().lower(),
+        "output_format": a.get("output_format", "mxf").strip().lower(),
+        "temp_dir": a.get("temp_dir", "").strip(),
         "workers": a.get("workers", "1").strip(),
     }
 
