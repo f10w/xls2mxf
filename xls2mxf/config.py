@@ -17,7 +17,7 @@ def app_dir() -> Path:
     main_file = getattr(main_mod, "__file__", None)
     if main_file:
         d = Path(main_file).resolve().parent
-        # если запущено как `python -m copy_rollers`, __main__ лежит ВНУТРИ пакета —
+        # если запущено как `python -m xls2mxf`, __main__ лежит ВНУТРИ пакета —
         # в этом случае conf/лог логичнее держать в рабочей папке, а не в пакете.
         if d == Path(__file__).resolve().parent:
             return Path.cwd()

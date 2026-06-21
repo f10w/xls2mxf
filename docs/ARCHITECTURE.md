@@ -9,10 +9,10 @@
 ## Структура пакета
 
 ```
-run.py                  Тонкий лаунчер. Точка для PyInstaller (→ copy_rollers.exe).
-copy_rollers/
+run.py                  Тонкий лаунчер. Точка для PyInstaller (→ xls2mxf.exe).
+xls2mxf/
   __init__.py           Включение ANSI в консоли Windows, версия.
-  __main__.py           Точка для `python -m copy_rollers`.
+  __main__.py           Точка для `python -m xls2mxf`.
   constants.py          EXT, FPS, HEADER_TEXT, DATE_RE, DEFAULT_CONF.
   errors.py             AssemblyError (с полем handler: 1/2/3).
   config.py             load_conf(), app_dir().
@@ -41,7 +41,7 @@ constants ─┬─> config ──> ffmpeg_tools ──> assembly ──> handle
 ## Сборка в exe
 
 PyInstaller `--onefile` упаковывает весь пакет в один `.exe`. Ключевые флаги в
-`build.bat`: `--collect-submodules copy_rollers` (чтобы подтянулись все модули
+`build.bat`: `--collect-submodules xls2mxf` (чтобы подтянулись все модули
 пакета) и `--collect-all openpyxl`.
 
 `app_dir()` в `config.py` определяет, где лежат conf и лог:

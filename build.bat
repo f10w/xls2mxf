@@ -3,7 +3,7 @@ chcp 65001 >nul
 setlocal
 
 echo ============================================
-echo   Сборка copy_rollers.exe
+echo   Сборка xls2mxf.exe
 echo ============================================
 echo.
 
@@ -25,8 +25,8 @@ if not exist "run.py" (
     pause
     exit /b 1
 )
-if not exist "copy_rollers\" (
-    echo [!] Рядом с батником нет папки пакета copy_rollers\
+if not exist "xls2mxf\" (
+    echo [!] Рядом с батником нет папки пакета xls2mxf\
     echo.
     pause
     exit /b 1
@@ -44,8 +44,8 @@ if errorlevel 1 (
 echo.
 
 echo [2/2] Сборка exe...
-python -m PyInstaller --onefile --console --name copy_rollers ^
-    --collect-submodules copy_rollers ^
+python -m PyInstaller --onefile --console --name xls2mxf ^
+    --collect-submodules xls2mxf ^
     --collect-all openpyxl ^
     run.py
 if errorlevel 1 (
@@ -58,10 +58,10 @@ if errorlevel 1 (
 echo.
 echo ============================================
 echo   Готово!
-echo   Экзешник: dist\copy_rollers.exe
+echo   Экзешник: dist\xls2mxf.exe
 echo ============================================
 echo.
-echo Дальше: скопируйте dist\copy_rollers.exe куда удобно,
-echo положите рядом copy_rollers.conf и (по желанию) ffmpeg.exe/ffprobe.exe.
+echo Дальше: скопируйте dist\xls2mxf.exe куда удобно,
+echo положите рядом xls2mxf.conf и (по желанию) ffmpeg.exe/ffprobe.exe.
 echo.
 pause

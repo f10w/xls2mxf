@@ -1,4 +1,4 @@
-СБОРКА copy_rollers.exe (Windows 10+)
+СБОРКА xls2mxf.exe (Windows 10+)
 ======================================
 
 1. Установить Python с https://www.python.org/downloads/
@@ -7,19 +7,19 @@
 2. Запустить build.bat двойным кликом.
    Он сам поставит pyinstaller и openpyxl и соберёт exe.
 
-3. Готовый copy_rollers.exe появится в папке dist\
+3. Готовый xls2mxf.exe появится в папке dist\
 
-4. Достать copy_rollers.exe из dist\, положить куда нужно.
+4. Достать xls2mxf.exe из dist\, положить куда нужно.
    Рядом с ним:
-     - copy_rollers.conf  (создастся сам при первом запуске, потом впишите пути)
+     - xls2mxf.conf  (создастся сам при первом запуске, потом впишите пути)
      - ffmpeg.exe, ffprobe.exe  (если их нет в PATH)
 
 ЗАПУСК
 ======
-  copy_rollers.exe                      — спросит режим и дату
-  copy_rollers.exe --check --date 170626   — проверка смены без сборки
-  copy_rollers.exe --mode auto --date 170626 — автосборка эфира
-  copy_rollers.exe --mode manual --date 170626 — копирование роликов
+  xls2mxf.exe                      — спросит режим и дату
+  xls2mxf.exe --check --date 170626   — проверка смены без сборки
+  xls2mxf.exe --mode auto --date 170626 — автосборка эфира
+  xls2mxf.exe --mode manual --date 170626 — копирование роликов
 
 Подробности — в папке docs\:
   README.md        — обзор и быстрый старт

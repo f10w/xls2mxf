@@ -3,7 +3,7 @@ import re
 
 HEADER_TEXT = "ID ролика"  # по этому заголовку ищем столбец с ID (может быть F, J, ...)
 EXT = ".mxf"
-CONF_NAME = "copy_rollers.conf"
+CONF_NAME = "xls2mxf.conf"
 DATE_RE = re.compile(r"(\d{6})$")  # ДДММГГ в конце имени (без расширения)
 FPS = 25  # PAL, для сравнения хронометража в кадрах
 
