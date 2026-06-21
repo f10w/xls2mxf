@@ -1,32 +1,32 @@
 # XLS2MXF
 
-Инструмент для подготовки эфирных рекламных блоков из траффик-листов.
+Tool for preparing broadcast ad blocks from traffic sheets.
 
-Работает в двух режимах:
+Works in two modes:
 
-- **Авто** (по умолчанию) — нарезает траффик-лист на рекламные блоки, для каждого
-  блока склеивает через ffmpeg последовательность «открывашка → ролики → закрывашка»
-  в готовый эфирный файл. Сначала автоматически запускает проверку смены (preflight),
-  и только при её успехе начинает сборку. Проверяет хронометраж и сам устраняет
-  типовые проблемы (нестандартное аудио, недостающие ролики).
-- **Ручной** (`--mode manual`) — извлекает ID роликов из траффик-листа за нужную дату,
-  находит соответствующие `.mxf` файлы и копирует их в отдельную папку.
+- **Auto** (default) — slices the traffic sheet into ad blocks, and for each block
+  assembles an ffmpeg sequence "opener → clips → closer" into a ready broadcast file.
+  Runs a preflight check automatically before assembly, and only proceeds on success.
+  Verifies duration and resolves common issues automatically (non-standard audio,
+  missing clips).
+- **Manual** (`--mode manual`) — extracts clip IDs from the traffic sheet for the
+  requested date, finds the corresponding `.mxf` files, and copies them to a folder.
 
 ---
 
-## Быстрый старт
+## Quick start
 
-1. Положите рядом с `xls2mxf.exe` файл `xls2mxf.conf` (при первом запуске
-   он создастся автоматически — отредактируйте пути).
-2. Убедитесь, что `ffmpeg.exe` и `ffprobe.exe` доступны: рядом с программой, в PATH
-   или пропишите пути в conf (секция `[ffmpeg]`).
-3. Проверьте конфигурацию:
+1. Place `xls2mxf.conf` next to `xls2mxf.exe` (it is created automatically on first
+   run — edit the paths to match your setup).
+2. Make sure `ffmpeg.exe` and `ffprobe.exe` are available: next to the program, in
+   PATH, or set the paths in conf under `[ffmpeg]`.
+3. Check configuration:
 
 ```
 xls2mxf.exe --doctor
 ```
 
-4. Запустите — без аргументов программа возьмёт завтрашнюю дату и запустит авто-сборку:
+4. Run — without arguments the program takes tomorrow's date and starts auto assembly:
 
 ```
 xls2mxf.exe
@@ -34,99 +34,99 @@ xls2mxf.exe
 
 ---
 
-## Типовые команды
+## Common commands
 
-Проверить конфигурацию (пути, ffmpeg, обёртки):
+Check configuration (paths, ffmpeg, wrappers):
 ```
 xls2mxf.exe --doctor
 ```
 
-Запустить авто-сборку на конкретную дату:
+Run auto assembly for a specific date:
 ```
 xls2mxf.exe --date 170626
 ```
 
-Проверить смену без сборки (dry-run):
+Verify the session without assembly (dry-run):
 ```
 xls2mxf.exe --check --date 170626
 ```
 
-Собрать и сразу открыть папку с результатом:
+Assemble and open the output folder immediately:
 ```
 xls2mxf.exe --date 170626 --open
 ```
 
-Ручной режим (копирование роликов в папку):
+Manual mode (copy clips to folder):
 ```
 xls2mxf.exe --mode manual --date 170626
 ```
 
-Интерактивный режим (программа спросит дату и режим):
+Interactive mode (program prompts for date and mode):
 ```
 xls2mxf.exe --manual
 ```
 
 ---
 
-## Аргументы командной строки
+## Command-line arguments
 
-| Аргумент | Значение |
-|----------|----------|
-| `--date ДДММГГ` | Дата смены. Без неё — завтрашняя дата. |
-| `--mode manual\|auto` | Режим работы. Без флага — авто. При `--manual` — спросит. |
-| `--check` | Dry-run: проверить готовность смены без сборки и перекодов. |
-| `--manual` | Интерактивный режим: спрашивает дату, режим и прочие вопросы. |
-| `--doctor` | Диагностика: проверяет пути, ffmpeg, обёртки и параметры конфига. |
-| `--open` | После успешной сборки открыть папку с результатом в Проводнике. |
-| `--xlsx ПУТЬ` | Папка с траффик-листами (переопределяет conf). |
-| `--src ПУТЬ` | Папка с роликами `.mxf` (переопределяет conf). |
-| `--dst ПУТЬ` | Папка назначения (переопределяет conf). |
-
----
-
-## Что создаётся
-
-- **Авто-режим:** папка `эфир на ДДММГГ` (внутри `dst` или `output_dir`) с собранными
-  файлами вида `ДД-ММ-ГГ_Reklama_RTR_ЧЧ-ММ.mxf` — по одному на рекламный блок.
-- **Ручной режим:** папка `ролики на ДДММГГ` (внутри `dst`) со скопированными `.mxf`.
-- **Лог** `ДДММГГ.log` рядом с программой — подробности прогона.
+| Argument | Description |
+|----------|-------------|
+| `--date DDMMYY` | Session date. Defaults to tomorrow. |
+| `--mode manual\|auto` | Run mode. Defaults to auto. With `--manual` — prompts. |
+| `--check` | Dry-run: verify session readiness without assembly or transcoding. |
+| `--manual` | Interactive mode: prompts for date, mode, and other questions. |
+| `--doctor` | Diagnostics: checks paths, ffmpeg, wrappers, and config values. |
+| `--open` | Open the output folder in Explorer after successful assembly. |
+| `--xlsx PATH` | Traffic-sheet folder (overrides conf). |
+| `--src PATH` | Source clips folder (overrides conf). |
+| `--dst PATH` | Destination folder (overrides conf). |
 
 ---
 
-## Защита от двойного запуска
+## Output
 
-При старте создаётся файл `ДДММГГ.lock` рядом с программой. Если попытаться запустить
-вторую копию на ту же дату — получите предупреждение и выход. Lock удаляется по
-завершению, в том числе при аварийном завершении.
-
----
-
-## Уведомления
-
-После завершения сборки (успех или ошибка) появляется Windows-уведомление. Это позволяет
-запустить программу и заниматься другими задачами, не наблюдая за терминалом.
+- **Auto mode:** folder `broadcast DDMMYY` (inside `dst` or `output_dir`) with
+  assembled files named `DD-MM-YY_Reklama_RTR_HH-MM.mxf` — one per ad block.
+- **Manual mode:** folder `clips DDMMYY` (inside `dst`) with copied `.mxf` files.
+- **Log** `DDMMYY.log` next to the program — full run details.
 
 ---
 
-## Параллельная сборка
+## Double-run protection
 
-По умолчанию блоки собираются последовательно (`workers=1`). Для ускорения задайте
-`workers=N` в `xls2mxf.conf` (секция `[assembly]`), где N — число параллельных
-ffmpeg-процессов. При параллельной сборке ошибки хронометража не прерывают работу,
-а попадают в финальный отчёт — рекомендуется предварительно проверить смену через `--check`.
-
----
-
-## Документация
-
-- **CONFIG.md** — справочник по всем параметрам `xls2mxf.conf`.
-- **RUNBOOK.md** — пошаговый сценарий эфирной смены.
-- **ARCHITECTURE.md** — внутреннее устройство для доработки кода.
+On start a `DDMMYY.lock` file is created next to the program. If a second instance
+is launched for the same date it will print a warning and exit. The lock is deleted
+on completion, including on error exit.
 
 ---
 
-## Требования
+## Notifications
 
-- Windows 10 или новее.
-- `ffmpeg` и `ffprobe` (для авто-режима).
-- Траффик-листы в формате `.xlsx` с датой `ДДММГГ` в конце имени файла.
+A Windows toast notification appears after assembly finishes (success or error).
+This lets you start the program and do other work without watching the terminal.
+
+---
+
+## Parallel assembly
+
+By default blocks are assembled sequentially (`workers=1`). For faster processing
+set `workers=N` in `xls2mxf.conf` under `[assembly]`, where N is the number of
+concurrent ffmpeg processes. In parallel mode duration errors do not interrupt work —
+they are collected into the final report. Run `--check` before enabling parallel mode.
+
+---
+
+## Documentation
+
+- **CONFIG.md** — reference for all `xls2mxf.conf` parameters.
+- **RUNBOOK.md** — step-by-step broadcast session guide.
+- **ARCHITECTURE.md** — internal design for developers.
+
+---
+
+## Requirements
+
+- Windows 10 or later.
+- `ffmpeg` and `ffprobe` (for auto mode).
+- Traffic sheets as `.xlsx` files with date `DDMMYY` at the end of the filename.

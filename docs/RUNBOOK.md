@@ -1,117 +1,115 @@
-# Runbook эфирной смены
+# Broadcast session runbook
 
-Пошаговый сценарий для оператора. Предполагается, что `xls2mxf.exe` и
-`xls2mxf.conf` уже настроены (см. CONFIG.md).
-
----
-
-## 1. Подготовка
-
-Убедитесь, что на нужную дату на месте:
-
-- Траффик-лист в папке `xlsx` (имя оканчивается на дату `ДДММГГ`, например
-  `Траффик-лист_Уфа_Россия_1_Уфа_170626.xlsx`).
-- Ролики в папке `src`.
-
-Дату задаём в формате **ДДММГГ**: 17 июня 2026 → `170626`.
+Step-by-step guide for the operator. Assumes `xls2mxf.exe` and `xls2mxf.conf`
+are already configured (see CONFIG.md).
 
 ---
 
-## 2. Проверка готовности (обязательный шаг)
+## 1. Preparation
 
-Перед сборкой всегда прогоняйте проверку — она за секунды показывает, пойдёт ли
-смена, не запуская тяжёлую обработку:
+Verify that for the target date the following are in place:
+
+- Traffic sheet in the `xlsx` folder (filename ends with date `DDMMYY`, e.g.
+  `Traffic-sheet_City_Channel_170626.xlsx`).
+- Clips in the `src` folder.
+
+Date format is **DDMMYY**: 17 June 2026 → `170626`.
+
+---
+
+## 2. Readiness check (mandatory)
+
+Always run the check before assembly — it shows in seconds whether the session
+will proceed, without triggering any heavy processing:
 
 ```
 xls2mxf.exe --check --date 170626
 ```
 
-### Как читать результат
+### Reading the result
 
-- **«всё чисто, смена полностью готова к сборке»** — можно собирать.
-- **«смена пойдёт в сборку с авто-обработкой»** + список предупреждений — собирать
-  можно, но программа что-то доделает сама:
-  - *«Будут добраны из резерва»* — каких-то роликов нет в `src`, но они есть в
-    резерве как `.avi` и будут перекодированы.
-  - *«Потребуют аудио-фикса»* — у каких-то роликов нестандартное аудио, оно будет
-    приведено к эфирному формату.
-- **«смена НЕ готова к сборке»** + красные строки — есть критические проблемы,
-  сборка не пойдёт, пока не устраните:
-  - *«Нет ни в src, ни в резерве»* — ролика нет нигде. Нужно найти и положить
-    вручную.
-  - *«Без аудиодорожек»* — файл без звука, требует ручной подготовки.
+- **"all clear, session is fully ready for assembly"** — safe to assemble.
+- **"session will proceed with auto-handling"** + list of warnings — assembly can
+  start, but the program will resolve some issues automatically:
+  - *"Will be recovered from backup"* — some clips are missing from `src` but exist
+    in the backup as `.avi` and will be transcoded.
+  - *"Require audio fix"* — some clips have non-standard audio that will be
+    normalised to broadcast format.
+- **"session NOT ready"** + red lines — critical issues exist; assembly will not
+  start until they are fixed:
+  - *"Not in src or backup"* — the clip is nowhere. Find it and place it manually.
+  - *"No audio tracks"* — the file has no audio; manual preparation required.
 
 ---
 
-## 3. Сборка
+## 3. Assembly
 
-Если проверка зелёная (или с устранимыми предупреждениями) — запускаем сборку:
+Once the check is green (or shows only auto-handleable warnings) — start assembly:
 
 ```
 xls2mxf.exe --mode auto --date 170626
 ```
 
-Что произойдёт по порядку:
+What happens in order:
 
-1. **Добор недостающих** — если каких-то роликов нет в `src`, программа возьмёт
-   `.avi` из резерва, перекодирует в эфирный формат и положит в `src`.
-2. **Аудио-фикс** — если есть ролики с нестандартным аудио, программа спросит
-   один раз: «Сконвертировать все к эфирному формату? (y/n)». Отвечайте `y`.
-3. **Сборка блоков** — каждый рекламный блок собирается в файл
-   `ДД-ММ-ГГ_Reklama_RTR_ЧЧ-ММ.mxf`.
-4. **Проверка хронометража** — каждый собранный файл проверяется: его длительность
-   (без открывашки и закрывашки) должна совпадать с ИТОГО из таблицы.
+1. **Recovery** — if any clips are missing from `src`, the program takes the `.avi`
+   from the backup, transcodes it to broadcast format, and places it in `src`.
+2. **Audio fix** — if clips with non-standard audio are found, the program asks once:
+   "Convert all to broadcast format (2 mono 24/48)? (y/n)". Answer `y`.
+3. **Block assembly** — each ad block is assembled into a file
+   `DD-MM-YY_Reklama_RTR_HH-MM.mxf`.
+4. **Duration check** — each assembled file is verified: its duration (excluding
+   opener and closer) must match the ИТОГО value from the table.
 
-### Если включён параллельный режим (workers > 1)
+### With parallel mode enabled (workers > 1)
 
-Сборка идёт без вопросов. Блоки собираются по несколько одновременно, в конце —
-сводка: сколько собрано, какие блоки с ошибкой. Аудио-фикс в этом режиме тоже
-происходит автоматически (но конвертация всё равно спросит подтверждение один раз
-до начала параллельной части).
-
----
-
-## 4. Результат
-
-Готовые файлы — в папке `эфир на ДДММГГ` (внутри `dst` или в `output_dir`).
-По одному файлу на рекламный блок, имя содержит время выхода блока.
-
-**Обязательно** просмотрите глазами хотя бы те ролики, что были добраны из резерва
-(перекодированы из AVI) — на движущемся материале убедитесь, что нет дёрганья или
-гребёнки. Это единственное, что автоматика гарантировать не может.
+Assembly runs without prompts. Blocks are assembled concurrently; at the end a
+summary shows how many succeeded and which blocks had errors. Audio fix in this mode
+is still confirmed once before the parallel part begins.
 
 ---
 
-## 5. Если что-то пошло не так
+## 4. Result
 
-### «Хронометраж блока не совпал»
-Программа покажет, какой именно ролик не той длины (ожидалось/получено в кадрах),
-либо сообщит, что все ролики корректны — тогда проблема в значении ИТОГО в таблице
-или в длительности обёрток. Смотрите подробности в логе `ДДММГГ.log`.
+Finished files are in folder `broadcast DDMMYY` (inside `dst` or `output_dir`).
+One file per ad block; the filename contains the block's air time.
 
-В последовательном режиме (workers=1) программа спросит, продолжать ли с
-остальными блоками. В параллельном — соберёт всё что можно, проблемные перечислит
-в конце.
-
-### «Ролик нет ни в src, ни в резерве»
-Файл отсутствует везде. Найдите его и положите в `src` (как `<ID>.mxf`) или в
-резерв (как `<ID>.avi`), затем перезапустите.
-
-### «Без аудиодорожек»
-У ролика нет звука. Подготовьте файл вручную и положите в `src`.
-
-### Файлы не находятся / неверная папка
-Проверьте пути в `xls2mxf.conf` (секция `[paths]`). Можно разово
-переопределить через `--xlsx`, `--src`, `--dst`.
-
-### ffmpeg не найден
-Положите `ffmpeg.exe` и `ffprobe.exe` рядом с программой, либо пропишите пути в
-conf (секция `[ffmpeg]`), либо добавьте в `PATH`.
+**Always** review at least the clips recovered from backup (transcoded from AVI) —
+check on moving footage that there is no judder or combing. This is the one operation
+the program cannot fully guarantee automatically.
 
 ---
 
-## Где искать подробности
+## 5. Troubleshooting
 
-Лог `ДДММГГ.log` рядом с программой содержит полную историю прогона: какие таблицы
-обработаны, что добрано, что исправлено, какие пути использованы, какие блоки и
-почему не прошли проверку.
+### "Duration mismatch"
+The program will identify which specific clip has the wrong length (expected/got in
+frames), or report that all clips are correct — in which case the issue is the ИТОГО
+value in the table or the wrapper durations. See the log `DDMMYY.log` for details.
+
+In sequential mode (workers=1) the program asks whether to continue with remaining
+blocks. In parallel mode it assembles everything possible and lists the failed blocks
+at the end.
+
+### "Not in src or backup"
+The file is missing everywhere. Find it and place it in `src` (as `<ID>.mxf`) or in
+the backup folder (as `<ID>.avi`), then re-run.
+
+### "No audio tracks"
+The clip has no audio. Prepare the file manually and place it in `src`.
+
+### Files not found / wrong folder
+Check the paths in `xls2mxf.conf` under `[paths]`. They can be overridden for a
+single run with `--xlsx`, `--src`, `--dst`.
+
+### ffmpeg not found
+Place `ffmpeg.exe` and `ffprobe.exe` next to the program, or set the paths in conf
+under `[ffmpeg]`, or add them to `PATH`.
+
+---
+
+## Where to look for details
+
+Log `DDMMYY.log` next to the program contains the full run history: which tables were
+processed, what was recovered, what was fixed, which paths were used, and which blocks
+failed the duration check and why.

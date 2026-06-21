@@ -1,41 +1,41 @@
-# Справочник по xls2mxf.conf
+# xls2mxf.conf reference
 
-Файл настроек лежит рядом с программой. Если его нет — создаётся автоматически
-при первом запуске со значениями по умолчанию. Формат — INI (секции в квадратных
-скобках, параметры `ключ = значение`, комментарии с `;`).
+The config file lives next to the program. If it does not exist it is created
+automatically on first run with default values. Format: INI (sections in square
+brackets, parameters as `key = value`, comments with `;`).
 
-## Общие правила для путей (Windows)
+## Path rules (Windows)
 
-- Пути пишутся как обычно в Windows, с обратными слешами: `D:\Эфир\Ролики`.
-- **Без кавычек**, даже если в пути есть пробелы: `C:\Мои файлы\ролики` — корректно.
-- Прямые слеши тоже работают: `D:/Эфир/Ролики`.
-- Сетевые пути (UNC) поддерживаются: `\\server\share\Ролики`.
-- **Не удваивайте** обратный слеш (`\\`) — пишите один.
-- Если в пути есть символ `%`, его нужно удвоить: `%%` (особенность INI-формата).
-- Кириллица в путях работает (файл conf в кодировке UTF-8).
+- Write paths the normal Windows way with backslashes: `D:\Broadcast\Clips`.
+- **No quotes**, even when the path contains spaces: `C:\My Files\clips` is fine.
+- Forward slashes also work: `D:/Broadcast/Clips`.
+- UNC network paths are supported: `\\server\share\Clips`.
+- **Do not double** backslashes (`\\`) — write just one.
+- If a path contains `%`, double it: `%%` (INI format limitation).
+- Non-ASCII characters in paths work (the conf file is UTF-8).
 
 ---
 
-## [paths] — рабочие папки
+## [paths] — working folders
 
 ```ini
 [paths]
-xlsx = D:\Эфир\Траффик-листы
-src  = D:\Эфир\Ролики
-dst  = D:\Эфир\Готово
+xlsx = D:\Broadcast\Traffic sheets
+src  = D:\Broadcast\Clips
+dst  = D:\Broadcast\Output
 ```
 
-| Параметр | Назначение |
-|----------|------------|
-| `xlsx` | Папка с траффик-листами `.xlsx`. Программа берёт файлы с нужной датой в конце имени. |
-| `src` | Папка, где лежат ролики `.mxf` (имя файла = ID ролика). Сюда же складываются доборы из резерва. |
-| `dst` | Базовая папка назначения. Внутри создаются `ролики на ДДММГГ` (ручной) и `эфир на ДДММГГ` (авто). |
+| Parameter | Purpose |
+|-----------|---------|
+| `xlsx` | Folder with traffic-sheet `.xlsx` files. The program picks files whose name ends with the requested date. |
+| `src` | Folder containing source clips `.mxf` (filename = clip ID). Recovered backup clips are also placed here. |
+| `dst` | Base destination folder. `clips DDMMYY` (manual) and `broadcast DDMMYY` (auto) are created inside it. |
 
-Точка `.` означает «текущая папка».
+A single `.` means the current folder.
 
 ---
 
-## [clipboard] — метки для ручного режима
+## [clipboard] — labels for manual mode
 
 ```ini
 [clipboard]
@@ -44,13 +44,13 @@ customline2 = customline2
 customline3 = customline3
 ```
 
-Используются только в ручном режиме при копировании списка ID в буфер обмена.
-Каждый пропуск между блоками в таблице заменяется ровно на эти три строки
-(в порядке 1, 2, 3). Это текстовые метки для вставки в Excel, **не пути к файлам**.
+Used only in manual mode when copying the ID list to the clipboard.
+Every gap between blocks in the table is replaced with exactly these three lines
+(in order 1, 2, 3). These are text labels for pasting into Excel, **not file paths**.
 
 ---
 
-## [ffmpeg] — пути к бинарникам
+## [ffmpeg] — binary paths
 
 ```ini
 [ffmpeg]
@@ -58,93 +58,109 @@ ffmpeg =
 ffprobe =
 ```
 
-| Параметр | Назначение |
-|----------|------------|
-| `ffmpeg` | Путь к `ffmpeg.exe`. Пусто = искать рядом с программой, затем в `PATH`. |
-| `ffprobe` | Путь к `ffprobe.exe`. Та же логика поиска. |
+| Parameter | Purpose |
+|-----------|---------|
+| `ffmpeg` | Path to `ffmpeg.exe`. Empty = look next to the program, then in `PATH`. |
+| `ffprobe` | Path to `ffprobe.exe`. Same search order. |
 
-Порядок поиска при пустом значении: **путь из conf → папка рядом с программой → PATH**.
+Search order when the value is empty: **conf path → folder next to the program → PATH**.
 
 ---
 
-## [assembly] — настройки авто-сборки
+## [assembly] — auto-assembly settings
 
 ```ini
 [assembly]
 middle = Reklama_RTR
-opener = D:\Эфир\Обёртки\открывашка.mxf
-closer = D:\Эфир\Обёртки\закрывашка.mxf
-backup_source = D:\Эфир\Резерв
+opener = D:\Broadcast\Wrappers\opener.mxf
+closer = D:\Broadcast\Wrappers\closer.mxf
+backup_source = D:\Broadcast\Backup
 output_dir =
 video_mode = copy
 audio_layout = 2mono
+output_format = mxf
+h264_bitrate = 16m
 workers = 1
 ```
 
 ### middle
-Средняя часть имени выходного файла. Имя формируется как
-`{ДД-ММ-ГГ}_{middle}_{ЧЧ-ММ}.mxf`. Разделители-подчёркивания подставляются
-автоматически — в conf указывайте только саму часть, например `Reklama_RTR`.
-Результат: `17-06-26_Reklama_RTR_05-25.mxf`.
+Middle part of the output filename. The name is built as
+`{DD-MM-YY}_{middle}_{HH-MM}.mxf`. Underscores are added automatically —
+specify only the part itself, e.g. `Reklama_RTR`.
+Result: `17-06-26_Reklama_RTR_05-25.mxf`.
 
 ### opener / closer
-Пути к файлам-обёрткам (открывашка и закрывашка). Должны быть в эфирном формате
-XDCAM HD422 (2 моно или 1 стерео аудио). Открывашка ставится перед роликами блока,
-закрывашка — после. Автоматически не правятся: если у них нестандартное аудио,
-сборка остановится с ошибкой.
+Paths to wrapper files (opener and closer). Must be in broadcast XDCAM HD422
+format (2 mono or 1 stereo audio). The opener is prepended to the block's clips,
+the closer appended. Wrappers are not fixed automatically: non-standard audio in a
+wrapper is a critical error that stops assembly.
 
 ### backup_source
-Резервный источник недостающих роликов. Если какого-то `<ID>.mxf` нет в `src`,
-программа ищет `<ID>.avi` здесь, перекодирует в эфирный XDCAM и кладёт в `src`.
-Пусто = добор отключён (при нехватке файлов — критическая остановка).
-Формат файлов в резерве: AVI PAL DV widescreen.
+Fallback source for missing clips. If a `<ID>.mxf` is not found in `src`, the
+program looks for `<ID>.avi` here, transcodes it to broadcast XDCAM, and places the
+result in `src`. Empty = recovery disabled (missing files cause a critical stop).
+Expected backup format: AVI PAL DV widescreen.
 
 ### output_dir
-База для папки вывода. Собранные файлы **всегда** кладутся в подпапку
-`эфир на ДДММГГ`. Если `output_dir` пусто — эта подпапка создаётся
-внутри `dst`. Если задан — внутри него. То есть смена за каждую дату всегда
-попадает в свою папку, а не в общий корень.
+Base folder for output. Assembled files are **always** placed in a subfolder
+`broadcast DDMMYY`. If `output_dir` is empty, the subfolder is created inside `dst`.
+If set, it is created inside `output_dir`. Either way each session date gets its own
+subfolder, not a shared root.
 
 ### video_mode
-Стратегия обработки видео при сборке:
+Video processing strategy during assembly:
 
-| Значение | Поведение |
-|----------|-----------|
-| `copy` | Видео копируется без перекодирования (бит-в-бит), аудио ремикшируется. Двухпроходно. Быстрее, качество видео не теряется. **Рекомендуется.** |
-| `reencode` | Один проход, видео и аудио перекодируются. Медленнее, видео не бит-в-бит. |
+| Value | Behaviour |
+|-------|-----------|
+| `copy` | Video is copied bit-for-bit, audio is remixed. Two-pass. Faster, no video quality loss. **Recommended.** |
+| `reencode` | Single pass, video and audio are re-encoded. Slower, video is not bit-for-bit. |
 
 ### audio_layout
-Целевая раскладка аудио в собранном файле:
+Target audio layout in the assembled file:
 
-| Значение | Результат |
-|----------|-----------|
-| `2mono` | Две моно-дорожки (broadcast-стандарт). **Дефолт.** |
-| `stereo` | Одна стерео-дорожка. |
+| Value | Result |
+|-------|--------|
+| `2mono` | Two mono tracks (broadcast standard). **Default.** |
+| `stereo` | One stereo track. |
 
-При сборке все ролики приводятся к этой раскладке (стерео раскладывается на 2 моно
-и наоборот).
+All clips are normalised to this layout during assembly (stereo is split into 2 mono
+and vice versa).
+
+### output_format
+Container and codec for the assembled files:
+
+| Value | Format |
+|-------|--------|
+| `mxf` | MXF OP1a, XDCAM HD422: mpeg2video 50 Mbit + pcm_s24le 48 kHz. **Default, broadcast.** |
+| `mp4` | MP4: H.264 + AAC 192k. Video is always re-encoded regardless of `video_mode`. |
+| `avi` | AVI: mpeg2video 50 Mbit + pcm_s24le. Video copy when `video_mode=copy`. |
+
+### h264_bitrate
+Target bitrate for H.264 when `output_format=mp4`.
+Format: `16m` (16 Mbit/s), `500k` (500 kbit/s). `bufsize` is set automatically as 2×
+bitrate. Has no effect for `mxf` or `avi`.
 
 ### workers
-Число параллельных сборок блоков:
+Number of parallel block assemblies:
 
-| Значение | Поведение |
-|----------|-----------|
-| `1` | Последовательно. При ошибке хронометража спрашивает, продолжать ли. |
-| `>1` | Параллельно (N блоков разом). Без вопросов — все ошибки в финальный отчёт. |
-| `0` | Автоматически по числу ядер процессора. |
+| Value | Behaviour |
+|-------|-----------|
+| `1` | Sequential. On a duration mismatch, asks whether to continue. |
+| `>1` | Parallel (N blocks at once). No prompts — all errors go to the final report. |
+| `0` | Automatically set to the CPU core count. |
 
-Для `reencode` оптимум обычно 2–4 (упор в CPU). Для `copy` можно больше
-(упор в диск). Подбирайте по своей машине, наблюдая загрузку.
+For `reencode` the typical optimum is 2–4 (CPU-bound). For `copy` more workers are
+feasible (disk-bound). Tune by watching system load.
 
 ---
 
-## Минимальный рабочий пример
+## Minimal working example
 
 ```ini
 [paths]
-xlsx = D:\Эфир\Траффик-листы
-src  = D:\Эфир\Ролики
-dst  = D:\Эфир\Готово
+xlsx = D:\Broadcast\Traffic sheets
+src  = D:\Broadcast\Clips
+dst  = D:\Broadcast\Output
 
 [clipboard]
 customline1 = customline1
@@ -157,11 +173,13 @@ ffprobe =
 
 [assembly]
 middle = Reklama_RTR
-opener = D:\Эфир\Обёртки\открывашка.mxf
-closer = D:\Эфир\Обёртки\закрывашка.mxf
-backup_source = D:\Эфир\Резерв
+opener = D:\Broadcast\Wrappers\opener.mxf
+closer = D:\Broadcast\Wrappers\closer.mxf
+backup_source = D:\Broadcast\Backup
 output_dir =
 video_mode = copy
 audio_layout = 2mono
+output_format = mxf
+h264_bitrate = 16m
 workers = 4
 ```

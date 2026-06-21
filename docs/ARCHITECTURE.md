@@ -1,31 +1,31 @@
-# Архитектура и технические решения
+# Architecture and technical decisions
 
-Документ для доработки кода. Описывает устройство пакета, поток данных, формат
-входных таблиц и неочевидные решения по ffmpeg, каждое из которых появилось из-за
-конкретной проблемы (не «на всякий случай»).
+Developer reference. Describes the package structure, data flow, input table format,
+and non-obvious ffmpeg decisions — each of which exists because of a specific real
+problem, not "just in case".
 
 ---
 
-## Структура пакета
+## Package structure
 
 ```
-run.py                  Тонкий лаунчер. Точка для PyInstaller (→ xls2mxf.exe).
+run.py                  Thin launcher. PyInstaller entry point (→ xls2mxf.exe).
 xls2mxf/
-  __init__.py           Включение ANSI в консоли Windows, версия.
-  __main__.py           Точка для `python -m xls2mxf`.
+  __init__.py           ANSI console setup for Windows, version.
+  __main__.py           Entry point for `python -m xls2mxf`.
   constants.py          EXT, FPS, HEADER_TEXT, DATE_RE, DEFAULT_CONF.
-  errors.py             AssemblyError (с полем handler: 1/2/3).
+  errors.py             AssemblyError (with handler field: 1/2/3).
   config.py             load_conf(), app_dir().
-  ui.py                 Logger, Progress, _red(), диалоги, буфер обмена.
-  tables.py             Парсинг траффик-листов, блоки, ID, даты, имена.
-  ffmpeg_tools.py       Поиск/запуск ffmpeg/ffprobe, длительность, аудио-раскладки.
-  assembly.py           Сборка блоков, аудио-фикс, перекод AVI→XDCAM.
-  handlers.py           Добор из резерва, чек и диагностика хронометража.
-  auto.py               Авто-режим: dry-run, оркестратор сборки, отчёт.
-  cli.py                Аргументы, выбор режима, ручной режим, main().
+  ui.py                 Logger, Progress, _red(), dialogs, clipboard.
+  tables.py             Traffic-sheet parsing, blocks, IDs, dates, filenames.
+  ffmpeg_tools.py       ffmpeg/ffprobe lookup/execution, duration, audio layouts.
+  assembly.py           Block assembly, audio fix, AVI->XDCAM transcode.
+  handlers.py           Backup recovery, duration check and diagnosis.
+  auto.py               Auto mode: dry-run, assembly orchestrator, report.
+  cli.py                Argument parsing, mode selection, manual mode, main().
 ```
 
-### Граф зависимостей (строго в одну сторону, без циклов)
+### Dependency graph (strictly one-way, no cycles)
 
 ```
 constants ─┬─> config ──> ffmpeg_tools ──> assembly ──> handlers ──> auto ──> cli
@@ -33,157 +33,159 @@ constants ─┬─> config ──> ffmpeg_tools ──> assembly ──> handle
            └─> ui ──────────────────────────────────────────────────-┘
 ```
 
-Низкоуровневые модули не знают о высокоуровневых. Это позволяет тестировать
-`tables` и `ffmpeg_tools` изолированно.
+Low-level modules have no knowledge of high-level ones. This allows `tables` and
+`ffmpeg_tools` to be tested in isolation.
 
 ---
 
-## Сборка в exe
+## Building the exe
 
-PyInstaller `--onefile` упаковывает весь пакет в один `.exe`. Ключевые флаги в
-`build.bat`: `--collect-submodules xls2mxf` (чтобы подтянулись все модули
-пакета) и `--collect-all openpyxl`.
+PyInstaller `--onefile` packages the whole package into a single `.exe`. Key flags
+in `build.bat`: `--collect-submodules xls2mxf` (to pull in all package modules) and
+`--collect-all openpyxl`.
 
-`app_dir()` в `config.py` определяет, где лежат conf и лог:
-- в собранном exe (`sys.frozen`) — папка самого exe;
-- при запуске из исходников — папка `run.py`;
-- при `python -m` — рабочая папка (CWD), не папка пакета.
+`app_dir()` in `config.py` determines where the conf and log live:
+- in a frozen exe (`sys.frozen`) — the folder containing the exe;
+- when running from source — the folder containing `run.py`;
+- with `python -m` — the working directory (CWD), not the package folder.
 
-Это важно: conf и лог всегда рядом с точкой запуска, а не во временной папке
-распаковки PyInstaller.
+This matters: conf and log are always next to the launch point, not in PyInstaller's
+temp extraction folder.
 
 ---
 
-## Формат входной таблицы (траффик-лист)
+## Input table format (traffic sheet)
 
-`.xlsx`, дата `ДДММГГ` в конце имени файла. Внутри:
+`.xlsx` file, date `DDMMYY` at the end of the filename. Inside:
 
-- Шапка в строке 4. Столбец с ID помечен заголовком **«ID ролика»** — ищется по
-  тексту, не по жёсткому номеру столбца (в «Траффик-лист» это F, в «Эфирка» — J).
-- **Блок** = подряд идущие строки с числом в столбце ID. Между блоками — пустые
-  строки (разделители) и строка с «ИТОГО» в столбце D.
-- **Время блока** — в столбце A первой строки блока (`datetime.time`), формат
-  `Ч:ММ`. Одинаково по всему блоку.
-- **Хронометраж ролика** — в столбце E («Хрон.»), секунды.
-- **ИТОГО блока** — в столбце E строки, где D == «ИТОГО». Сумма хронометража
-  роликов блока без обёрток.
+- Header in row 4. The ID column is identified by the header text **"ID ролика"** —
+  searched by text, not by a hard-coded column number (column F in "Траффик-лист",
+  column J in "Эфирка").
+- **Block** = consecutive rows with an integer in the ID column. Blocks are separated
+  by empty rows and a row with "ИТОГО" in column D.
+- **Block time** — column A of the first row of the block (`datetime.time`), format
+  `H:MM`. Identical across all rows of the block.
+- **Clip duration** — column E ("Хрон."), in seconds.
+- **Block total (ИТОГО)** — column E of the row where D == "ИТОГО". Sum of clip
+  durations in the block, excluding wrappers.
 
-`parse_blocks()` возвращает список словарей:
+`parse_blocks()` returns a list of dicts:
 ```python
-{"time": "05:25", "ids": [3072716, ...], "chron": {id: сек, ...}, "itogo": 60}
+{"time": "05:25", "ids": [3072716, ...], "chron": {id: sec, ...}, "itogo": 60}
 ```
-ID хранятся в порядке таблицы, с дубликатами. `chron` — key-value (один хрон на ID).
+IDs are stored in table order, with duplicates. `chron` is key-value (one duration
+per unique ID).
 
 ---
 
-## Два режима
+## Two modes
 
-### Ручной (`modes` в cli.py)
-Извлекает ID за дату, копирует `<ID>.mxf` в `ролики на ДДММГГ`, опционально кладёт
-список в буфер. Список для буфера читается «как есть» сверху вниз (с дубликатами,
-с сохранением пропусков), пропуски заполняются `customline1/2/3`.
+### Manual (`cli.py`)
+Extracts IDs for the date, copies `<ID>.mxf` into `clips DDMMYY`, optionally writes
+the list to clipboard. The clipboard list is read top-to-bottom as-is (with
+duplicates and gaps preserved); gaps are filled with `customline1/2/3`.
 
-### Авто (`auto.py`)
-Нарезает блоки, проходит три обработчика, собирает каждый блок через ffmpeg.
-
----
-
-## Три обработчика ошибок
-
-### Обработчик 1 — недостающие файлы (`handlers.recover_missing_from_backup`)
-До сборки проверяется наличие всех `<ID>.mxf` в `src`. Чего нет — ищется
-`<ID>.avi` в `backup_source`, перекодируется в эфирный XDCAM и кладётся в `src`.
-Чего нет и в резерве → критическая остановка.
-
-### Обработчик 2 — хронометраж (`handlers.verify_block_duration` + `diagnose_block_duration`)
-После сборки каждого блока: `(длительность файла − опен − клоуз)` сравнивается с
-ИТОГО **в кадрах** (× FPS=25, округление — устойчиво к погрешности ffprobe).
-При несовпадении `diagnose_block_duration` перечитывает таблицу и проходит ролики
-блока, указывая, какой именно не той длины. Если все ролики корректны — значит
-проблема в ИТОГО таблицы или в обёртках.
-
-### Обработчик 3 — нестандартное аудио (`assembly.fix_audio_to_2mono`)
-Целевой формат — 2 моно pcm_s24le 48k. Классификация (`classify_audio_layout`):
-`2mono`/`1stereo` — норма; `none` (0 дорожек) — критическая остановка; всё прочее
-(1 моно, 3+, 4 дорожки) — `fixable`. Fixable-файлы при подтверждении пользователя
-конвертируются в папку `_audiofix` (src не трогается), правило приведения: первые
-два аудиоканала → две моно-дорожки (1 моно дублируется).
+### Auto (`auto.py`)
+Slices blocks, runs three handlers, assembles each block via ffmpeg.
 
 ---
 
-## Неочевидные решения по ffmpeg
+## Three error handlers
 
-Каждое — следствие реальной проблемы, всплывшей при отладке. Не меняйте, не
-понимая зачем.
+### Handler 1 — missing files (`handlers.recover_missing_from_backup`)
+Before assembly: all `<ID>.mxf` in `src` are checked for presence. Missing ones are
+looked up as `<ID>.avi` in `backup_source`, transcoded to broadcast XDCAM, and placed
+in `src`. Not found in backup either → critical stop.
 
-### Видео copy, аудио ремикс (двухпроходно)
-Все ролики XDCAM HD422 идентичны по видео, но **разнятся по аудио** (где 2 моно,
-где 1 стерео). Concat demuxer с полным `-c copy` на разнородном аудио ломается.
-Решение (`video_mode=copy`): первый проход нормализует аудио каждого файла к
-целевой раскладке (видео copy), второй — concat demuxer с `-c copy`.
+### Handler 2 — duration check (`handlers.verify_block_duration` + `diagnose_block_duration`)
+After each block is assembled: `(file duration − opener − closer)` is compared to
+ИТОГО **in frames** (× FPS=25; rounding makes this robust against ffprobe jitter).
+On mismatch `diagnose_block_duration` re-reads the table and walks the block's clips,
+identifying which one has the wrong length. If all clips are correct, the problem is
+in the ИТОГО value or the wrapper durations.
 
-### Явный `-map` для второй моно-дорожки
-Concat demuxer **без явного маппинга берёт только одну дорожку каждого типа**,
-теряя вторую моно. Поэтому в финальном concat стоит
-`-map 0:v:0 -map 0:a:0 -map 0:a:1`. Без этого звук на выходе становится одной
-дорожкой.
-
-### Абсолютные пути в concat-листе
-Concat demuxer трактует относительные пути **относительно расположения list-файла**.
-При вложенных temp-папках это давало дублирование пути. `build_concat_demuxer_list`
-пишет абсолютные пути.
-
-### asplit при приведении аудио
-Выход аудио-фильтра ffmpeg нельзя использовать дважды. При разложении на 2 моно
-поток размножается через `asplit=2`, иначе 3/4-дорожечные файлы падают с ошибкой
-«stream matches no streams».
-
-### stdin=DEVNULL для ffmpeg/ffprobe
-ffmpeg по умолчанию читает stdin и **съедает пользовательский ввод** (ответы y/n).
-Все вызовы идут с `stdin=subprocess.DEVNULL`, иначе интерактивные вопросы ломаются.
-
-### Перекод AVI PAL DV → XDCAM (handler 1)
-Источник: 720×576, анаморф SAR 64:45, bottom field first, стерео pcm_s16le.
-Цель: 1920×1080, квадратный пиксель, top field first, mpeg2 422 50M, 2 моно
-pcm_s24le. **Интерлейс сохраняется** (не деинтерлейсим): `scale=...:interl=1`
-масштабирует поля раздельно, `setfield=tff` + `-flags +ilme+ildct -top 1` помечает
-верхнее поле. 25→25 fps, число кадров не меняется (хронометраж сохраняется).
-
-> ⚠️ Смена порядка полей BFF→TFF при апскейле SD→HD технически корректна, но
-> результат **обязательно проверять глазами** на движущемся материале. Это
-> единственная операция в проекте, которую автоматика не гарантирует полностью.
+### Handler 3 — non-standard audio (`assembly.fix_audio_to_2mono`)
+Target format: 2 mono pcm_s24le 48k. Layout classification (`classify_audio_layout`):
+`2mono`/`1stereo` — OK; `none` (0 tracks) — critical stop; anything else (1 mono,
+3+, 4 tracks) — `fixable`. Fixable files are converted on user confirmation into a
+`_audiofix` subfolder (src is not modified). Normalisation rule: first two audio
+channels → two mono tracks (a single channel is duplicated).
 
 ---
 
-## Параллельная сборка (`workers` в conf)
+## Non-obvious ffmpeg decisions
 
-- `workers=1` — последовательно, с интерактивными вопросами при ошибке.
-- `workers>1` — ThreadPoolExecutor, без вопросов, ошибки в финальный отчёт.
-- `workers=0` — по числу ядер.
+Each is a consequence of a real problem found during debugging. Do not change without
+understanding the reason.
 
-Каждый блок собирается в свою temp-подпапку (`_tmp/{ЧЧ-ММ}`), чтобы воркеры не
-конфликтовали по именам `concat_list.txt` и `norm_NNN.mxf`. Прогресс в параллельном
-режиме — потокобезопасный счётчик под `threading.Lock`, без бегущей строки.
+### Video copy, audio remix (two-pass)
+All XDCAM HD422 clips share the same video parameters but **differ in audio layout**
+(some have 2 mono, some 1 stereo). Concat demuxer with full `-c copy` breaks on
+heterogeneous audio. Solution (`video_mode=copy`): first pass normalises audio of
+each file to the target layout (video copy); second pass runs the concat demuxer with
+`-c copy`.
 
-Поведение определяется числом воркеров: последовательный режим сохраняет старую
-интерактивную логику, параллельный — пакетную «собери всё, отчитайся».
+### Explicit `-map` for the second mono track
+Concat demuxer **without explicit mapping picks only one track of each type**,
+silently dropping the second mono. The final concat therefore uses
+`-map 0:v:0 -map 0:a:0 -map 0:a:1`. Without this the output has a single audio track.
+
+### Absolute paths in the concat list
+Concat demuxer interprets relative paths **relative to the list file's location**.
+With nested temp folders this produced doubled path segments.
+`build_concat_demuxer_list` always writes absolute paths.
+
+### asplit when normalising audio
+An ffmpeg filter output cannot be used more than once. When splitting into 2 mono the
+stream is duplicated via `asplit=2`; without this, 3/4-track files fail with
+"stream matches no streams".
+
+### stdin=DEVNULL for ffmpeg/ffprobe
+ffmpeg reads stdin by default and **consumes the user's keystrokes** (y/n answers).
+All invocations use `stdin=subprocess.DEVNULL`; without this interactive prompts
+break.
+
+### AVI PAL DV → XDCAM transcode (handler 1)
+Source: 720×576, anamorphic SAR 64:45, bottom field first, stereo pcm_s16le.
+Target: 1920×1080, square pixel, top field first, mpeg2 4:2:2 50 Mbit, 2 mono
+pcm_s24le. **Interlace is preserved** (no deinterlace): `scale=...:interl=1` scales
+fields separately, `setfield=tff` + `-flags +ilme+ildct -top 1` marks top-field-first.
+25→25 fps, frame count unchanged (duration is preserved).
+
+> ⚠️ Reversing field order BFF→TFF during SD→HD upscale is technically correct, but
+> the result **must be visually checked on moving footage**. This is the only operation
+> in the project that automation cannot fully guarantee.
+
+---
+
+## Parallel assembly (`workers` in conf)
+
+- `workers=1` — sequential, with interactive prompts on error.
+- `workers>1` — ThreadPoolExecutor, no prompts, errors collected into the final report.
+- `workers=0` — number of CPU cores.
+
+Each block is assembled in its own temp subfolder (`_tmp/{HH-MM}`) so workers do not
+conflict on `concat_list.txt` and `norm_NNN.mxf` filenames. Progress in parallel mode
+is a thread-safe counter under `threading.Lock`, without an animated progress bar.
+
+The mode is determined by the worker count: sequential preserves the old interactive
+logic, parallel uses a batch "assemble everything, then report" approach.
 
 ---
 
 ## Dry-run (`--check`, `auto.run_dry_check`)
 
-Все проверки без единого перекода и без записи файлов: парсинг таблицы, суммы
-хронометража по вёрстке (арифметика таблицы, не реальные длительности), наличие
-файлов + что добирается из резерва, аудио-раскладки (что fixable, что критично),
-обёртки и ffmpeg на месте. Возвращает вердикт: чисто / с предупреждениями / не
-готова. Использует те же функции, что и боевая сборка, поэтому не расходится с ней
-по логике.
+All checks run without a single transcode or file write: table parsing, duration
+arithmetic from the sheet (table math, not real file durations), file presence +
+what would be recovered from backup, audio layouts (what is fixable, what is
+critical), wrappers and ffmpeg availability. Returns a verdict: clean / with warnings /
+not ready. Uses the same functions as the real assembly, so it cannot diverge in logic.
 
 ---
 
-## Целевой эфирный формат (справочно)
+## Target broadcast format (reference)
 
-- Видео: mpeg2video 4:2:2, 1920×1080, 25 fps, top field first, 50 Мбит,
-  `-flags +ilme+ildct -top 1`, квадратный пиксель (SAR 1:1, DAR 16:9).
-- Аудио: pcm_s24le, 48000 Гц, 2 моно-дорожки (по умолчанию).
-- Контейнер: MXF (OP1a).
+- Video: mpeg2video 4:2:2, 1920×1080, 25 fps, top field first, 50 Mbit,
+  `-flags +ilme+ildct -top 1`, square pixel (SAR 1:1, DAR 16:9).
+- Audio: pcm_s24le, 48000 Hz, 2 mono tracks (default).
+- Container: MXF (OP1a).
