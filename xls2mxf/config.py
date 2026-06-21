@@ -1,4 +1,4 @@
-"""Конфигурация и расположение программы."""
+"""Configuration loading and app directory resolution."""
 import configparser
 import sys
 from pathlib import Path
@@ -7,18 +7,18 @@ from .constants import CONF_NAME, DEFAULT_CONF
 
 
 def app_dir() -> Path:
-    """Папка, рядом с которой лежат conf и пишется лог.
-    - В собранном exe (PyInstaller onefile): папка самого exe.
-    - При запуске из исходников: папка главного скрипта (run.py / -m), а не
-      папка пакета, чтобы conf/лог лежали рядом с точкой запуска."""
+    """Directory where conf and log files are stored.
+    - Frozen exe (PyInstaller onefile): folder containing the exe.
+    - Running from source: folder of the entry script (run.py / -m), not the
+      package folder, so conf/log stay next to the launch point."""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     main_mod = sys.modules.get("__main__")
     main_file = getattr(main_mod, "__file__", None)
     if main_file:
         d = Path(main_file).resolve().parent
-        # если запущено как `python -m xls2mxf`, __main__ лежит ВНУТРИ пакета —
-        # в этом случае conf/лог логичнее держать в рабочей папке, а не в пакете.
+        # when run as `python -m xls2mxf`, __main__ lives INSIDE the package —
+        # in that case keep conf/log in the working directory, not inside the package.
         if d == Path(__file__).resolve().parent:
             return Path.cwd()
         return d
@@ -29,10 +29,10 @@ def load_conf() -> dict:
     conf_path = app_dir() / CONF_NAME
     if not conf_path.exists():
         conf_path.write_text(DEFAULT_CONF, encoding="utf-8")
-        print(f"[i] Создан {conf_path.name} со значениями по умолчанию.")
-        print( "[i] Сборка блоков работает ПОСЛЕДОВАТЕЛЬНО (workers=1).")
-        print( "    Это безопасный режим: ошибки останавливают сборку и спрашивают.")
-        print(f"    Для параллельной сборки задайте workers=N в [{conf_path.name}], секция [assembly].")
+        print(f"[i] Created {conf_path.name} with default values.")
+        print( "[i] Block assembly runs SEQUENTIALLY (workers=1).")
+        print( "    Safe mode: errors stop assembly and prompt for confirmation.")
+        print(f"    For parallel assembly set workers=N in [{conf_path.name}] under [assembly].")
         print()
     cp = configparser.ConfigParser()
     cp.read(conf_path, encoding="utf-8")
@@ -59,7 +59,7 @@ def load_conf() -> dict:
         "video_mode": a.get("video_mode", "copy").strip().lower(),
         "audio_layout": a.get("audio_layout", "2mono").strip().lower(),
         "output_format": a.get("output_format", "mxf").strip().lower(),
+        "h264_bitrate": a.get("h264_bitrate", "16m").strip(),
         "temp_dir": a.get("temp_dir", "").strip(),
         "workers": a.get("workers", "1").strip(),
     }
-

@@ -1,4 +1,4 @@
-"""Работа с траффик-листами: парсинг блоков, ID, даты, имена."""
+"""Traffic sheet parsing: blocks, IDs, dates, filenames."""
 import datetime as _dt
 from pathlib import Path
 
@@ -9,8 +9,8 @@ from .errors import AssemblyError
 
 
 def _find_id_column(ws) -> int | None:
-    """Ищет столбец с заголовком HEADER_TEXT. Возвращает индекс столбца (1-based)
-    и строку шапки, либо None. Заголовок ищется в первых строках листа."""
+    """Searches for the column with HEADER_TEXT header. Returns (col_index 1-based,
+    header_row) or None. Searches within the first 10 rows of the sheet."""
     for row in ws.iter_rows(min_row=1, max_row=10):
         for cell in row:
             if isinstance(cell.value, str) and cell.value.strip() == HEADER_TEXT:
@@ -20,14 +20,14 @@ def _find_id_column(ws) -> int | None:
 
 
 def extract_ids(xlsx_path: Path) -> set:
-    """Извлекает целочисленные ID из столбца, найденного по заголовку 'ID ролика'.
-    Не зависит от того, в каком столбце (F, J, ...) он находится."""
+    """Extracts integer IDs from the column found by the 'ID ролика' header.
+    Works regardless of which column (F, J, ...) it occupies."""
     ids = set()
     wb = openpyxl.load_workbook(xlsx_path, data_only=True, read_only=True)
     for ws in wb.worksheets:
         found = _find_id_column(ws)
         if not found:
-            continue  # на этом листе нет колонки ID ролика
+            continue  # this sheet has no ID column
         col, header_row = found
         for row in ws.iter_rows(min_row=header_row + 1, min_col=col, max_col=col,
                                 values_only=True):
@@ -59,12 +59,11 @@ def find_xlsx_for_date(xlsx_dir: Path, ddmmyy: str) -> list:
 
 
 def read_id_column_raw(xlsx_path: Path, customlines: list) -> list:
-    """Читает столбец 'ID ролика' СВЕРХУ ВНИЗ как есть: без сортировки и без
-    удаления дубликатов. Каждый пропуск (пустые строки между блоками данных)
-    заменяется ровно на три строки customlines. Пустоты до первого блока и
-    после последнего отбрасываются.
+    """Reads the 'ID ролика' column TOP-TO-BOTTOM as-is: no sorting, no dedup.
+    Each gap (one or more empty rows between data blocks) is replaced with
+    exactly three customlines entries. Leading and trailing empty rows are dropped.
 
-    Возвращает список строк — готовый к построчной вставке (как столбец в Excel)."""
+    Returns a list of strings ready for line-by-line paste (like a column in Excel)."""
     wb = openpyxl.load_workbook(xlsx_path, data_only=True, read_only=True)
     ws = wb.active
     found = _find_id_column(ws)
@@ -73,7 +72,7 @@ def read_id_column_raw(xlsx_path: Path, customlines: list) -> list:
         return []
     col, header_row = found
 
-    # собираем "сырые" значения столбца ниже шапки: либо текст значения, либо None
+    # collect raw column values below the header: cell value as string or None
     raw = []
     for row in ws.iter_rows(min_row=header_row + 1, min_col=col, max_col=col,
                             values_only=True):
@@ -86,7 +85,7 @@ def read_id_column_raw(xlsx_path: Path, customlines: list) -> list:
             raw.append(str(v).strip())
     wb.close()
 
-    # обрезаем ведущие и хвостовые пустоты
+    # strip leading and trailing empty entries
     start, end = 0, len(raw)
     while start < end and raw[start] is None:
         start += 1
@@ -94,7 +93,7 @@ def read_id_column_raw(xlsx_path: Path, customlines: list) -> list:
         end -= 1
     raw = raw[start:end]
 
-    # любой внутренний пропуск (одна или несколько подряд пустых) -> 3 кастома
+    # any internal gap (one or more consecutive Nones) -> 3 custom lines
     result = []
     i = 0
     n = len(raw)
@@ -103,7 +102,7 @@ def read_id_column_raw(xlsx_path: Path, customlines: list) -> list:
             result.append(raw[i])
             i += 1
         else:
-            # проматываем всю пачку пустых
+            # skip the entire run of empty cells
             while i < n and raw[i] is None:
                 i += 1
             result.extend(customlines)
@@ -112,23 +111,23 @@ def read_id_column_raw(xlsx_path: Path, customlines: list) -> list:
 
 
 def parse_blocks(xlsx_path: Path) -> list:
-    """Режет траффик-лист на блоки. Возвращает список словарей:
+    """Slices a traffic sheet into blocks. Returns a list of dicts:
        {time: 'HH:MM', ids: [int,...], itogo: int|None}.
-    Блок = подряд идущие строки с числом в столбце ID; завершается строкой,
-    где ID пуст. Время берётся из столбца A первой строки блока. ИТОГО — из
-    столбца 'Хрон.' (E) в строке, где D == 'ИТОГО'."""
+    A block = consecutive rows with a number in the ID column; terminated by an
+    empty-ID row. Time comes from column A of the first row of the block. ИТОГО
+    comes from column E ('Хрон.') in the row where column D == 'ИТОГО'."""
     import datetime as _dt
     wb = openpyxl.load_workbook(xlsx_path, data_only=True, read_only=True)
     ws = wb.active
     found = _find_id_column(ws)
     if not found:
         wb.close()
-        raise AssemblyError(f"В таблице {xlsx_path.name} не найден столбец 'ID ролика'.")
+        raise AssemblyError(f"Column 'ID ролика' not found in {xlsx_path.name}.")
     id_col, header_row = found
 
     blocks = []
     cur_ids = []
-    cur_chron = {}      # {id: хрон из столбца E} для текущего блока
+    cur_chron = {}      # {id: duration from column E} for the current block
     cur_time = None
     pending_itogo = None
 
@@ -138,7 +137,7 @@ def parse_blocks(xlsx_path: Path) -> list:
         e_val = row[4] if len(row) > 4 else None
         id_val = row[id_col - 1] if len(row) >= id_col else None
 
-        # нормализуем ID
+        # normalise ID
         fid = None
         if isinstance(id_val, int):
             fid = id_val
@@ -149,7 +148,7 @@ def parse_blocks(xlsx_path: Path) -> list:
 
         if fid is not None:
             cur_ids.append(fid)
-            # хрон ролика из столбца E (key-value по id; один хрон на id)
+            # clip duration from column E (keyed by id; one value per id)
             if isinstance(e_val, (int, float)):
                 cur_chron[fid] = int(e_val)
             if cur_time is None:
@@ -158,15 +157,13 @@ def parse_blocks(xlsx_path: Path) -> list:
                 elif a_val not in (None, ""):
                     cur_time = str(a_val).strip()
         else:
-            # строка без ID — возможно ИТОГО или пустая
+            # row without ID — could be ИТОГО or blank
             if isinstance(d_val, str) and d_val.strip().upper() == "ИТОГО":
                 if isinstance(e_val, (int, float)):
                     pending_itogo = int(e_val)
-            # завершение блока: есть накопленные ролики и встретили разрыв
+            # close the block: accumulated clips + encountered a gap
             if cur_ids and (id_val is None or id_val == ""):
-                # закрываем блок только когда блок реально закончился:
-                # ориентир — пустая строка ПОСЛЕ итого. Но проще: копим и закрываем
-                # на первой пустой строке, где нет ни ID, ни ИТОГО.
+                # close only on the first fully blank row (no ID, no ИТОГО marker)
                 is_blank = (a_val in (None, "")) and (d_val in (None, "")) and (id_val in (None, ""))
                 if is_blank:
                     blocks.append({"time": cur_time, "ids": cur_ids,
@@ -184,7 +181,7 @@ def parse_blocks(xlsx_path: Path) -> list:
 
 
 def time_to_filepart(t: str) -> str:
-    """'05:25' -> '05-25'. Если время None — 'unknown'."""
+    """'05:25' -> '05-25'. Returns 'unknown' when time is None."""
     if not t:
         return "unknown"
     return t.replace(":", "-")
@@ -196,11 +193,11 @@ def ddmmyy_to_dashed(ddmmyy: str) -> str:
     return f"{ddmmyy[0:2]}-{ddmmyy[2:4]}-{ddmmyy[4:6]}"
 
 
-# ---------- проверка наличия файлов (обработчик 1) ----------
+# ---------- file existence check (handler 1) ----------
 
 
 def check_all_files_exist(blocks: list, src_dir: Path) -> list:
-    """Возвращает список (block_index, missing_id). Пусто = всё на месте."""
+    """Returns list of (block_index, missing_id). Empty list means all files present."""
     missing = []
     for bi, b in enumerate(blocks):
         for fid in b["ids"]:
@@ -209,4 +206,4 @@ def check_all_files_exist(blocks: list, src_dir: Path) -> list:
     return missing
 
 
-# ---------- построение ffmpeg-команд ----------
+# ---------- ffmpeg command helpers ----------

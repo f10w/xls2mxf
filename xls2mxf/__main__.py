@@ -1,4 +1,4 @@
-"""Точка входа для `python -m xls2mxf`."""
+"""Entry point for `python -m xls2mxf`."""
 import sys
 from .cli import main
 

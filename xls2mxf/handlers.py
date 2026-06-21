@@ -1,4 +1,4 @@
-"""Обработчики ошибок: добор из резерва, чек и диагностика хронометража."""
+"""Error handlers: fallback recovery, duration check and diagnosis."""
 from pathlib import Path
 
 from .constants import FPS, EXT
@@ -10,11 +10,11 @@ from .ui import _red
 
 def recover_missing_from_backup(missing_ids: list, backup_dir: Path, src_dir: Path,
                                 ffmpeg: str, log) -> tuple:
-    """Для каждого недостающего ID ищет <ID>.avi в backup_dir, перекодирует в
-    эфирный <ID>.mxf и кладёт в src_dir. Возвращает (recovered, still_missing)."""
+    """For each missing ID, looks for <ID>.avi in backup_dir, transcodes it to
+    broadcast <ID>.mxf, and places it in src_dir. Returns (recovered, still_missing)."""
     recovered = []
     still_missing = []
-    # .avi регистр может быть любым — соберём индекс по нижнему регистру stem
+    # .avi filenames may have any case — build an index keyed by lowercase stem
     index = {}
     if backup_dir.is_dir():
         for f in backup_dir.iterdir():
@@ -29,20 +29,20 @@ def recover_missing_from_backup(missing_ids: list, backup_dir: Path, src_dir: Pa
         try:
             transcode_avi_to_xdcam(avi, out_mxf, ffmpeg, log)
             recovered.append(fid)
-            log.log(f"  добор: {avi.name} -> {out_mxf.name}", to_console=False)
+            log.log(f"  recovered: {avi.name} -> {out_mxf.name}", to_console=False)
         except AssemblyError as e:
             still_missing.append(fid)
-            log.log(f"  [!] не удалось перекодировать {avi.name}: {e}", to_console=False)
+            log.log(f"  [!] failed to transcode {avi.name}: {e}", to_console=False)
     return recovered, still_missing
 
 
-# ---------- проверка хронометража (обработчик 2) ----------
+# ---------- duration check (handler 2) ----------
 
 
 def verify_block_duration(out_path: Path, itogo: int, d_open: float,
                           d_close: float, ffprobe: str) -> tuple:
-    """Сравнивает в кадрах: (d_total - d_open - d_close) с itogo.
-    Возвращает (ok, expected_frames, got_frames)."""
+    """Frame-accurate comparison: (d_total - d_open - d_close) vs itogo.
+    Returns (ok, expected_frames, got_frames)."""
     d_total = get_duration(out_path, ffprobe)
     d_blocks = d_total - d_open - d_close
     got_frames = round(d_blocks * FPS)
@@ -52,10 +52,10 @@ def verify_block_duration(out_path: Path, itogo: int, d_open: float,
 
 
 def diagnose_block_duration(block: dict, src_dir: Path, ffprobe: str, log) -> dict:
-    """ОБРАБОТЧИК 2. Вызывается когда хронометраж блока не сошёлся.
-    Проходит уникальные ролики блока, сверяет реальную длительность (ffprobe)
-    с хрон из таблицы (block['chron']) в кадрах. Печатает красным несовпавшие.
-    Возвращает {'mismatched': [...], 'all_match': bool}."""
+    """HANDLER 2. Called when a block duration mismatch is detected.
+    Walks the unique clips of the block and compares their real duration (ffprobe)
+    against the table chron (block['chron']) in frames. Prints mismatches in red.
+    Returns {'mismatched': [...], 'all_match': bool}."""
     chron = block.get("chron", {})
     mismatched = []
     checked = set()
@@ -66,38 +66,37 @@ def diagnose_block_duration(block: dict, src_dir: Path, ffprobe: str, log) -> di
         f = src_dir / f"{fid}{EXT}"
         expected_sec = chron.get(fid)
         if expected_sec is None:
-            mismatched.append((fid, None, None, "нет хрон в таблице"))
+            mismatched.append((fid, None, None, "no duration in table"))
             continue
         if not f.is_file():
-            mismatched.append((fid, expected_sec, None, "файл отсутствует"))
+            mismatched.append((fid, expected_sec, None, "file missing"))
             continue
         try:
             dur = get_duration(f, ffprobe)
         except AssemblyError:
-            mismatched.append((fid, expected_sec, None, "ffprobe не прочитал"))
+            mismatched.append((fid, expected_sec, None, "ffprobe failed to read"))
             continue
         got_frames = round(dur * FPS)
         exp_frames = round(expected_sec * FPS)
         if got_frames != exp_frames:
-            mismatched.append((fid, exp_frames, got_frames, "длительность не совпала"))
+            mismatched.append((fid, exp_frames, got_frames, "duration mismatch"))
 
     all_match = not mismatched
-    # вывод
+    # output
     log.log("", to_console=False)
-    log.log(f"[ОБРАБОТЧИК 2] Диагностика блока {block['time']}:", to_console=False)
+    log.log(f"[HANDLER 2] Diagnosing block {block['time']}:", to_console=False)
     if mismatched:
-        print(_red(f"  Несовпадающие ролики в блоке {block['time']}:"))
+        print(_red(f"  Mismatched clips in block {block['time']}:"))
         for fid, exp, got, why in mismatched:
             if exp is not None and got is not None:
-                line = f"    {fid}{EXT}: ожидалось {exp} кадров, получено {got} ({why})"
+                line = f"    {fid}{EXT}: expected {exp} frames, got {got} ({why})"
             else:
-                line = f"    {fid}{EXT}: {why} (ожидалось {exp} кадров)"
+                line = f"    {fid}{EXT}: {why} (expected {exp} frames)"
             print(_red(line))
             log.log("  " + line.strip(), to_console=False)
     else:
-        msg = (f"  Все ролики блока {block['time']} совпадают по хронометражу, "
-               f"а блок в сумме — нет. Проверьте ИТОГО в таблице и длительность обёрток.")
+        msg = (f"  All clips in block {block['time']} match their individual durations, "
+               f"but the total does not. Check ИТОГО in the table and wrapper durations.")
         print(_red(msg))
         log.log(msg.strip(), to_console=False)
     return {"mismatched": mismatched, "all_match": all_match}
-

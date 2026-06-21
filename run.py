@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Тонкий лаунчер для PyInstaller: собирается в xls2mxf.exe."""
+"""Thin launcher for PyInstaller: builds into xls2mxf.exe."""
 import sys
 import os
 

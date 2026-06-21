@@ -1,4 +1,4 @@
-"""CLI: разбор аргументов, выбор режима, ручной режим, точка main()."""
+"""CLI: argument parsing, mode selection, manual mode, main() entry point."""
 import argparse
 import datetime as dt
 import os
@@ -17,19 +17,19 @@ from .auto import run_auto_mode, run_dry_check
 
 def main() -> int:
     conf = load_conf()
-    ap = argparse.ArgumentParser(description="Сбор роликов .mxf по ID из траффик-листов.")
-    ap.add_argument("--date", help="дата ДДММГГ (по умолчанию — завтра)")
+    ap = argparse.ArgumentParser(description="Collect .mxf clips by ID from traffic sheets.")
+    ap.add_argument("--date", help="date DDMMYY (default: tomorrow)")
     ap.add_argument("--mode", choices=["manual", "auto"],
-                    help="режим: manual (копирование) | auto (сборка эфира). "
-                         "Без флага — авто (или спросит при --manual).")
+                    help="mode: manual (copy clips) | auto (assemble broadcast). "
+                         "Default: auto (or prompts with --manual).")
     ap.add_argument("--check", action="store_true",
-                    help="dry-run: проверить смену без сборки и перекодов.")
+                    help="dry-run: verify the session without assembly or transcoding.")
     ap.add_argument("--manual", action="store_true",
-                    help="интерактивный режим: спрашивает дату, режим и прочие вопросы.")
+                    help="interactive mode: prompts for date, mode and other questions.")
     ap.add_argument("--doctor", action="store_true",
-                    help="диагностика конфигурации: пути, ffmpeg, обёртки.")
+                    help="configuration diagnostics: paths, ffmpeg, wrappers.")
     ap.add_argument("--open", action="store_true",
-                    help="открыть папку с результатом в Проводнике после успешной сборки.")
+                    help="open the output folder in Explorer after successful assembly.")
     ap.add_argument("--xlsx", default=conf["xlsx"])
     ap.add_argument("--src", default=conf["src"])
     ap.add_argument("--dst", default=conf["dst"])
@@ -40,13 +40,13 @@ def main() -> int:
 
     log = Logger()
 
-    # дата
+    # date
     if args.date:
         try:
             parse_ddmmyy(args.date)
             ddmmyy = args.date
         except ValueError as e:
-            print(f"[!] Некорректная дата в --date: {e}")
+            print(f"[!] Invalid date in --date: {e}")
             return 1
     elif args.manual:
         ddmmyy = ask_date()
@@ -58,7 +58,7 @@ def main() -> int:
     src_dir = Path(args.src)
     dst_root = Path(args.dst)
 
-    # режим (при --check режим не спрашиваем — это всегда проверка авто-сборки)
+    # mode (--check always implies auto; no prompt needed)
     if args.check:
         mode = "auto"
     elif args.mode:
@@ -68,124 +68,123 @@ def main() -> int:
     else:
         mode = "auto"
 
-    log.log(f"=== Сбор роликов на {ddmmyy} (режим: {mode}) ===")
-    log.log(f"Запуск: {dt.datetime.now():%Y-%m-%d %H:%M:%S}")
+    log.log(f"=== Collecting clips for {ddmmyy} (mode: {mode}) ===")
+    log.log(f"Started: {dt.datetime.now():%Y-%m-%d %H:%M:%S}")
     log.log("")
 
     if not xlsx_dir.is_dir():
-        log.log(f"[!] Папка с эксель-файлами не найдена: {xlsx_dir}")
+        log.log(f"[!] Excel folder not found: {xlsx_dir}")
         _finish_log(log, app_dir(), ddmmyy)
         return 1
     if not src_dir.is_dir():
-        log.log(f"[!] Папка с роликами не найдена: {src_dir}")
+        log.log(f"[!] Clips folder not found: {src_dir}")
         _finish_log(log, app_dir(), ddmmyy)
         return 1
 
-    # lock-файл: не даём двум копиям работать на одну дату одновременно
+    # lock file: prevents two instances from running for the same date simultaneously
     lock_path = None
     if not args.check:
         lock_path = app_dir() / f"{ddmmyy}.lock"
         if lock_path.exists():
-            print(f"[!] Уже выполняется сборка на {ddmmyy} (найден {lock_path.name}).")
-            print(f"    Если прошлый запуск завис — удалите файл вручную и повторите.")
+            print(f"[!] Assembly for {ddmmyy} is already running (found {lock_path.name}).")
+            print(f"    If the previous run is stuck — delete the file manually and retry.")
             return 1
         lock_path.touch()
 
     try:
-        # ===== DRY-RUN (проверка без сборки) =====
+        # ===== DRY-RUN (check without assembly) =====
         if args.check:
             try:
                 rc = run_dry_check(conf, ddmmyy, xlsx_dir, src_dir, dst_root, log,
                                    interactive=args.manual)
             except AssemblyError as e:
-                log.log(f"[ОШИБКА] {e}")
-                print(_red(f"[ОШИБКА] {e}"))
+                log.log(f"[ERROR] {e}")
+                print(_red(f"[ERROR] {e}"))
                 _finish_log(log, app_dir(), ddmmyy)
                 return 1
             _finish_log(log, app_dir(), ddmmyy)
             return rc
 
-        # ===== АВТО-РЕЖИМ =====
+        # ===== AUTO MODE =====
         if mode == "auto":
-            # preflight: сначала dry-run, при критических проблемах — стоп
+            # preflight: dry-run first; stop on critical issues
             try:
                 rc_pre = run_dry_check(conf, ddmmyy, xlsx_dir, src_dir, dst_root, log,
                                        interactive=args.manual)
             except AssemblyError as e:
-                log.log(f"[ОШИБКА preflight] {e}")
-                print(_red(f"[ОШИБКА] {e}"))
+                log.log(f"[ERROR preflight] {e}")
+                print(_red(f"[ERROR] {e}"))
                 _finish_log(log, app_dir(), ddmmyy)
-                notify_windows("xls2mxf — ошибка", str(e)[:120])
+                notify_windows("xls2mxf — error", str(e)[:120])
                 return 1
             if rc_pre != 0:
-                log.log("Сборка не запущена: preflight выявил критические проблемы.")
+                log.log("Assembly not started: preflight found critical issues.")
                 _finish_log(log, app_dir(), ddmmyy)
-                notify_windows("xls2mxf — ошибка", f"Проверка {ddmmyy} не пройдена.")
+                notify_windows("xls2mxf — error", f"Check for {ddmmyy} failed.")
                 return 1
 
             log.log("")
-            log.log("--- Запуск сборки ---")
-            print("\n--- Запуск сборки ---\n")
+            log.log("--- Starting assembly ---")
+            print("\n--- Starting assembly ---\n")
             try:
                 rc = run_auto_mode(conf, ddmmyy, xlsx_dir, src_dir, dst_root, log,
                                    interactive=args.manual)
             except AssemblyError as e:
                 log.log("")
-                log.log(f"[ОШИБКА] {e}")
+                log.log(f"[ERROR] {e}")
                 if e.handler == 1:
-                    log.log("  -> Обработчик 1 (поиск/добор недостающих файлов) "
-                            "будет добавлен позже.")
+                    log.log("  -> Handler 1 (missing file search/recovery) to be added later.")
                 _finish_log(log, app_dir(), ddmmyy)
-                notify_windows("xls2mxf — ошибка", str(e)[:120])
+                notify_windows("xls2mxf — error", str(e)[:120])
                 return 1
             _finish_log(log, app_dir(), ddmmyy)
             if rc == 0:
-                notify_windows("xls2mxf", f"Сборка {ddmmyy} завершена успешно.")
+                notify_windows("xls2mxf", f"Assembly for {ddmmyy} completed successfully.")
                 if args.open:
                     out_base = Path(conf["output_dir"]) if conf["output_dir"] else dst_root
-                    out_dir = out_base / f"эфир на {ddmmyy}"
+                    out_dir = out_base / f"broadcast {ddmmyy}"
                     if out_dir.is_dir():
                         os.startfile(out_dir)
             else:
-                notify_windows("xls2mxf — ошибка", f"Сборка {ddmmyy}: есть ошибки (см. лог).")
+                notify_windows("xls2mxf — error", f"Assembly for {ddmmyy}: errors found (see log).")
             return rc
 
-        # ===== РУЧНОЙ РЕЖИМ =====
+        # ===== MANUAL MODE =====
         xlsx_files = find_xlsx_for_date(xlsx_dir, ddmmyy)
         if not xlsx_files:
-            log.log(f"[!] В {xlsx_dir} не найдено .xlsx с датой {ddmmyy} в имени.")
+            log.log(f"[!] No .xlsx files with date {ddmmyy} in name found in {xlsx_dir}.")
             _finish_log(log, app_dir(), ddmmyy)
             return 1
 
-        log.log(f"Папка-источник эксель: {xlsx_dir.resolve()}")
-        log.log("Обрабатываемые траффик-листы:")
+        log.log(f"Excel source folder: {xlsx_dir.resolve()}")
+        log.log("Processing traffic sheets:")
         all_ids = set()
         for x in xlsx_files:
             got = extract_ids(x)
             all_ids |= got
-            log.log(f"  - {x.name}: {len(got)} ID")
-        log.log(f"Всего уникальных ID: {len(all_ids)}")
+            log.log(f"  - {x.name}: {len(got)} IDs")
+        log.log(f"Total unique IDs: {len(all_ids)}")
         log.log("")
 
-        # папка назначения
-        dst_dir = dst_root / f"ролики на {ddmmyy}"
+        # destination folder
+        dst_dir = dst_root / f"clips {ddmmyy}"
         dst_dir.mkdir(parents=True, exist_ok=True)
-        log.log(f"Папка-источник роликов: {src_dir.resolve()}")
-        log.log(f"Папка назначения:       {dst_dir.resolve()}")
+        log.log(f"Clips source folder: {src_dir.resolve()}")
+        log.log(f"Destination folder:  {dst_dir.resolve()}")
         log.log("")
 
-        # копирование с прогресс-баром
+        # copy with progress bar
         ids_sorted = sorted(all_ids)
         copied_files = []
         missing = []
-        print()  # отступ перед баром
+        print()  # blank line before bar
         bar = Progress(total=len(ids_sorted))
         for i in ids_sorted:
             f = src_dir / f"{i}{EXT}"
             name = f.name
             if not f.is_file():
                 missing.append(i)
-                bar.update(f"нет файла: {name}")
+                bar.update(f"missing: {name}")
                 continue
             target = dst_dir / name
             if not target.exists():
@@ -195,62 +194,62 @@ def main() -> int:
                     bar.update(name)
                 except OSError as e:
                     missing.append(i)
-                    bar.update(f"ошибка: {name}")
-                    log.log(f"[!] Ошибка копирования {name}: {e}", to_console=False)
+                    bar.update(f"error: {name}")
+                    log.log(f"[!] Copy error {name}: {e}", to_console=False)
             else:
-                copied_files.append(name)  # уже на месте — считаем доставленным
-                bar.update(f"уже есть: {name}")
+                copied_files.append(name)  # already present — count as delivered
+                bar.update(f"already exists: {name}")
         bar.finish()
 
-        # листинг в лог
-        log.log("Скопированные файлы:")
+        # listing to log
+        log.log("Copied files:")
         if copied_files:
             for n in copied_files:
                 log.log(f"  + {n}", to_console=False)
         else:
-            log.log("  (нет)", to_console=False)
+            log.log("  (none)", to_console=False)
         if missing:
             log.log("", to_console=False)
-            log.log(f"Не найдено {EXT} для {len(missing)} ID:", to_console=False)
+            log.log(f"No {EXT} found for {len(missing)} IDs:", to_console=False)
             log.log("  " + ", ".join(map(str, missing)), to_console=False)
 
-        # итог
+        # summary
         print()
         if missing:
-            msg = (f"Готово. Скопировано {len(copied_files)} файлов, "
-                   f"не найдено {len(missing)} (см. лог).")
+            msg = (f"Done. Copied {len(copied_files)} files, "
+                   f"{len(missing)} not found (see log).")
         else:
-            msg = f"Успешно скопировано {len(copied_files)} файлов, ошибок не найдено."
+            msg = f"Successfully copied {len(copied_files)} files, no errors."
         log.log(msg)
 
-        # --- копирование итогового списка ID в буфер обмена (только в --manual) ---
+        # --- copy final ID list to clipboard (--manual only) ---
         print()
         if args.manual:
             try:
-                ans = input("Скопировать итоговый список в буфер обмена? (y/n): ").strip().lower()
+                ans = input("Copy final ID list to clipboard? (y/n): ").strip().lower()
             except EOFError:
                 ans = "n"
         else:
             ans = "n"
         if ans in ("y", "yes", "д", "да"):
-            source = xlsx_files[0]  # читаем одну таблицу (первая по алфавиту)
+            source = xlsx_files[0]  # read first table (alphabetical order)
             lines = read_id_column_raw(source, conf["customlines"])
             if not lines:
-                print("[!] Не удалось прочитать столбец ID для буфера.")
-                log.log(f"Буфер обмена: не удалось прочитать столбец из {source.name}",
+                print("[!] Could not read ID column for clipboard.")
+                log.log(f"Clipboard: could not read column from {source.name}",
                         to_console=False)
             else:
-                # один-в-один как Excel: значения через перевод строки
+                # one-to-one as Excel: values separated by newlines
                 clip_text = "\r\n".join(lines)
                 if copy_to_clipboard(clip_text):
-                    print(f"[+] В буфер скопировано строк: {len(lines)} "
-                          f"(источник: {source.name})")
+                    print(f"[+] Copied to clipboard: {len(lines)} lines "
+                          f"(source: {source.name})")
                     log.log("", to_console=False)
-                    log.log(f"Буфер обмена: {len(lines)} строк из {source.name}",
+                    log.log(f"Clipboard: {len(lines)} lines from {source.name}",
                             to_console=False)
                 else:
-                    print("[!] Не удалось получить доступ к буферу обмена.")
-                    log.log("Буфер обмена: ошибка доступа", to_console=False)
+                    print("[!] Could not access clipboard.")
+                    log.log("Clipboard: access error", to_console=False)
 
         _finish_log(log, app_dir(), ddmmyy)
         return 0
@@ -281,17 +280,17 @@ def _run_doctor(conf: dict) -> int:
     def _info(label, detail=""):
         print(f"  [-] {label}" + (f": {detail}" if detail else ""))
 
-    print("=== Диагностика конфигурации ===\n")
+    print("=== Configuration diagnostics ===\n")
 
-    print("Пути:")
-    for key, label in (("xlsx", "xlsx (траффик-листы)"),
-                       ("src",  "src  (ролики .mxf)"),
-                       ("dst",  "dst  (назначение)")):
+    print("Paths:")
+    for key, label in (("xlsx", "xlsx (traffic sheets)"),
+                       ("src",  "src  (source clips .mxf)"),
+                       ("dst",  "dst  (destination)")):
         p = Path(conf[key])
         if p.is_dir():
             _ok(label, str(p.resolve()))
         else:
-            _fail(label, f"не найдена: {conf[key]!r}")
+            _fail(label, f"not found: {conf[key]!r}")
 
     print("\nffmpeg:")
     for tool in ("ffmpeg", "ffprobe"):
@@ -302,73 +301,73 @@ def _run_doctor(conf: dict) -> int:
                 ver = r.stdout.decode(errors="replace").splitlines()[0]
                 _ok(tool, f"{path}  [{ver}]")
             else:
-                _fail(tool, f"найден, но не запускается: {path}")
+                _fail(tool, f"found but failed to run: {path}")
         except AssemblyError as e:
             _fail(tool, str(e))
         except Exception as e:
             _fail(tool, str(e))
 
-    print("\nОбёртки:")
+    print("\nWrappers:")
     for key, label in (("opener", "opener"), ("closer", "closer")):
         v = conf[key]
         if not v:
-            _fail(label, "не задана в конфиге")
+            _fail(label, "not set in config")
         elif Path(v).is_file():
             _ok(label, str(Path(v).resolve()))
         else:
-            _fail(label, f"файл не найден: {v!r}")
+            _fail(label, f"file not found: {v!r}")
 
-    print("\nПараметры сборки:")
+    print("\nAssembly parameters:")
     m = conf.get("middle", "")
     if m:
         _ok("middle", m)
     else:
-        _fail("middle", "не задано — имена выходных файлов будут некорректными")
+        _fail("middle", "not set — output filenames will be incorrect")
 
     try:
         w = int(conf.get("workers", "1"))
         if w == 1:
-            _ok("workers", "1 (последовательно)")
+            _ok("workers", "1 (sequential)")
         elif w == 0:
-            _ok("workers", f"0 (авто → {os.cpu_count() or 1} ядер)")
+            _ok("workers", f"0 (auto -> {os.cpu_count() or 1} cores)")
         else:
-            _ok("workers", f"{w} (параллельно)")
+            _ok("workers", f"{w} (parallel)")
     except (ValueError, TypeError):
-        _fail("workers", f"некорректное значение: {conf.get('workers')!r}")
+        _fail("workers", f"invalid value: {conf.get('workers')!r}")
 
     td = conf.get("temp_dir", "")
     if td:
         if Path(td).is_dir():
             _ok("temp_dir", str(Path(td).resolve()))
         else:
-            _fail("temp_dir", f"папка не найдена: {td!r}")
+            _fail("temp_dir", f"folder not found: {td!r}")
     else:
-        _info("temp_dir", "не задан (temp создаётся рядом с выходными файлами)")
+        _info("temp_dir", "not set (temp created alongside output files)")
 
     bs = conf.get("backup_source", "")
     if bs:
         if Path(bs).is_dir():
             _ok("backup_source", str(Path(bs).resolve()))
         else:
-            _fail("backup_source", f"папка не найдена: {bs!r}")
+            _fail("backup_source", f"folder not found: {bs!r}")
     else:
-        _info("backup_source", "не задан (добор из резерва недоступен)")
+        _info("backup_source", "not set (fallback recovery unavailable)")
 
     od = conf.get("output_dir", "")
     if od:
         if Path(od).is_dir():
             _ok("output_dir", str(Path(od).resolve()))
         else:
-            _fail("output_dir", f"папка не найдена: {od!r}")
+            _fail("output_dir", f"folder not found: {od!r}")
     else:
-        _info("output_dir", "не задан (папка вывода создаётся внутри dst)")
+        _info("output_dir", "not set (output folder created inside dst)")
 
     print()
     if all_ok:
-        print("Всё в порядке — конфигурация готова к работе.")
+        print("All good — configuration is ready.")
         return 0
     else:
-        print("Есть проблемы — исправьте отмеченные [!] пункты перед запуском.")
+        print("Issues found — fix the [!] items above before running.")
         return 1
 
 
@@ -376,15 +375,15 @@ def _finish_log(log: Logger, where: Path, ddmmyy: str):
     log_path = where / f"{ddmmyy}.log"
     try:
         log.save(log_path)
-        print(f"Лог: {log_path}")
+        print(f"Log: {log_path}")
     except OSError as e:
-        print(f"[!] Не удалось записать лог: {e}")
+        print(f"[!] Failed to write log: {e}")
 
 
 if __name__ == "__main__":
     code = main()
     try:
-        input("\nНажми Enter для выхода...")
+        input("\nPress Enter to exit...")
     except EOFError:
         pass
     sys.exit(code)

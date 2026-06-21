@@ -1,80 +1,82 @@
-"""Константы проекта."""
+"""Project constants."""
 import re
 
-HEADER_TEXT = "ID ролика"  # по этому заголовку ищем столбец с ID (может быть F, J, ...)
-EXT = ".mxf"  # расширение исходных роликов — всегда .mxf
+HEADER_TEXT = "ID ролика"  # column header used to locate the ID column (may be F, J, ...)
+EXT = ".mxf"  # extension of source clips — always .mxf
 
-# расширения выходных файлов по формату
+# output file extensions by format
 FORMAT_EXT = {"mxf": ".mxf", "mp4": ".mp4", "avi": ".avi"}
 CONF_NAME = "xls2mxf.conf"
-DATE_RE = re.compile(r"(\d{6})$")  # ДДММГГ в конце имени (без расширения)
-FPS = 25  # PAL, для сравнения хронометража в кадрах
+DATE_RE = re.compile(r"(\d{6})$")  # DDMMYY at the end of the filename stem
+FPS = 25  # PAL — used for frame-accurate duration comparison
 
 DEFAULT_CONF = """\
 [paths]
-; папка с эксель-файлами (траффик-листами)
+; folder with Excel traffic sheets
 xlsx = .
-; папка, где лежат сами ролики .mxf
+; folder containing source .mxf clips
 src = .
-; куда создавать папку "ролики на ДДММГГ"
+; base folder where the output subfolder is created
 dst = .
 
 [clipboard]
-; чем заполняются пропуски между блоками при копировании списка в буфер.
-; любой пропуск превращается ровно в эти три строки.
+; fill text for gaps between blocks when copying the ID list to clipboard.
+; each gap is replaced with exactly these three lines.
 customline1 = customline1
 customline2 = customline2
 customline3 = customline3
 
 [ffmpeg]
-; пути к бинарникам. пусто = искать рядом с программой, затем в PATH.
+; paths to binaries. Empty = search next to the program, then PATH.
 ffmpeg =
 ffprobe =
 
 [assembly]
-; средняя часть имени выходного файла: {ДД-ММ-ГГ}_{middle}_{ЧЧ-ММ}.mxf
+; middle part of the output filename: {DD-MM-YY}_{middle}_{HH-MM}.mxf
 middle = Reklama_RTR
-; пути к файлам-обёрткам (консистентный XDCAM HD422 MXF)
+; paths to wrapper files (consistent XDCAM HD422 MXF)
 opener =
 closer =
-; резервный источник недостающих роликов (AVI PAL DV). Файлы ищутся как <ID>.avi
-; и перекодируются в эфирный XDCAM, складываются в папку src.
+; fallback source for missing clips (AVI PAL DV). Files are looked up as <ID>.avi
+; and transcoded to broadcast XDCAM, then placed into the src folder.
 backup_source =
-; база для папки вывода. Файлы всегда кладутся в подпапку "эфир на ДДММГГ".
-; пусто = эта подпапка создаётся внутри dst.
+; base for the output folder. Files always go into subfolder "broadcast on DDMMYY".
+; empty = subfolder is created inside dst.
 output_dir =
-; стратегия видео: copy (видео не трогаем, аудио ремикшируется; двухпроходно)
-;                  reencode (один проход, видео и аудио перекодируются)
+; video strategy: copy  (video untouched, audio remixed; two-pass)
+;                reencode (single pass, video and audio re-encoded)
 video_mode = copy
-; раскладка аудио в итоговом файле: 2mono (дефолт) | stereo
+; audio layout in the output file: 2mono (default) | stereo
 audio_layout = 2mono
-; формат выходных файлов:
-;   mxf — MXF OP1a, XDCAM HD422, mpeg2 50M + pcm_s24le  [по умолчанию, эфирный]
-;   mp4 — MP4, H.264 + AAC 192k  (видео всегда перекодируется)
-;   avi — AVI, mpeg2 50M + pcm_s24le  (видео copy, если video_mode=copy)
+; output file format:
+;   mxf — MXF OP1a, XDCAM HD422, mpeg2 50M + pcm_s24le  [default, broadcast]
+;   mp4 — MP4, H.264 + AAC 192k  (video always transcoded)
+;   avi — AVI, mpeg2 50M + pcm_s24le  (video copy when video_mode=copy)
 output_format = mxf
-; локальная папка для временных файлов (norm_NNN.mxf, audiofix).
-; Рекомендуется задать при работе с сетевыми папками (SMB/UNC): временные файлы
-; будут создаваться локально, что значительно ускоряет сборку.
-; Подпапка с датой (ДДММГГ) создаётся и удаляется автоматически.
-; Пусто = временные файлы создаются рядом с выходными (в output_dir/dst).
+; H.264 bitrate for output_format=mp4. Format: 16m (16 Mbit), 500k (500 kbit).
+; bufsize is set automatically as 2x bitrate.
+h264_bitrate = 16m
+; local folder for temporary files (norm_NNN.mxf, audiofix).
+; Recommended for network share (SMB/UNC) workflows: temp files will be
+; created locally, significantly speeding up assembly.
+; A date-named subfolder (DDMMYY) is created and removed automatically.
+; Empty = temp files are created alongside the output files (in output_dir/dst).
 temp_dir =
-; Число параллельных ffmpeg-процессов при сборке блоков.
+; Number of parallel ffmpeg processes during block assembly.
 ;
-;   workers = 1   — ПОСЛЕДОВАТЕЛЬНО [по умолчанию, рекомендуется]
-;                   Блоки собираются один за другим. При ошибке хронометража
-;                   программа останавливается и спрашивает, продолжать ли.
-;                   Нагрузка на систему минимальна.
+;   workers = 1   — SEQUENTIAL [default, recommended]
+;                   Blocks are assembled one at a time. On a duration mismatch
+;                   the program stops and asks whether to continue.
+;                   System load is minimal.
 ;
-;   workers = N   — ПАРАЛЛЕЛЬНО (N одновременных ffmpeg)
-;                   Быстрее на многоядерных машинах, но все ошибки хронометража
-;                   копятся в финальный отчёт — интерактивных вопросов нет.
-;                   Рекомендуется запускать только после успешного --check.
+;   workers = N   — PARALLEL (N concurrent ffmpeg processes)
+;                   Faster on multi-core machines, but all duration errors
+;                   accumulate into the final report — no interactive prompts.
+;                   Recommended only after a successful --check.
 ;
-;   workers = 0   — автоматически по числу ядер CPU (максимальная нагрузка).
+;   workers = 0   — automatic, based on CPU core count (maximum load).
 ;
-; ВНИМАНИЕ: при workers > 1 и ошибке в одном блоке остальные блоки продолжают
-; собираться. Убедитесь, что смена прошла проверку (--check), прежде чем
-; включать параллельный режим.
+; WARNING: with workers > 1, if one block fails the remaining blocks continue
+; assembling. Ensure the session has passed --check before enabling parallel mode.
 workers = 1
 """

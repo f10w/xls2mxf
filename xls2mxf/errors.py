@@ -1,12 +1,12 @@
-"""Исключения проекта."""
+"""Project exceptions."""
 
 
 class AssemblyError(Exception):
-    """Базовая ошибка сборки. handler — какой обработчик должен сработать."""
+    """Base assembly error. handler indicates which error handler should respond."""
     def __init__(self, message, handler=None, payload=None):
         super().__init__(message)
-        self.handler = handler          # 1, 2 или 3
+        self.handler = handler  # 1, 2, or 3
         self.payload = payload or {}
 
 
-# ---------- поиск ffmpeg / ffprobe ----------
+# ---------- ffmpeg / ffprobe lookup ----------

@@ -1,4 +1,4 @@
-"""Авто-режим: выбор таблицы, dry-run проверка, сборка эфира, отчёт."""
+"""Auto mode: table selection, dry-run check, broadcast assembly, report."""
 import os
 from pathlib import Path
 
@@ -18,83 +18,82 @@ from .handlers import (recover_missing_from_backup, verify_block_duration,
 
 def pick_table_for_assembly(xlsx_dir: Path, ddmmyy: str, log,
                              interactive: bool = True) -> Path:
-    """1) Траффик-лист_* за дату -> берём.
-       2) нет траффика, но есть другой xlsx -> предупреждаем, спрашиваем y/n (или авто-берём).
-       3) ничего -> ошибка."""
+    """1) Traffic sheet matching the date -> use it.
+       2) No traffic sheet but another xlsx found -> warn and ask y/n (or auto-accept).
+       3) Nothing found -> error."""
     candidates = find_xlsx_for_date(xlsx_dir, ddmmyy)
     if not candidates:
-        raise AssemblyError(f"Не найдено таблиц, соответствующих дате {ddmmyy}.")
+        raise AssemblyError(f"No tables found matching date {ddmmyy}.")
     traffic = [x for x in candidates if x.name.lower().startswith("траффик-лист")]
     if traffic:
         return traffic[0]
-    # нетипичный файл
+    # non-standard file
     other = candidates[0]
-    print(f"[!] Типичная таблица 'Траффик-лист_*' на {ddmmyy} не найдена.")
-    print(f"    Найден нетипичный файл: {other.name}")
+    print(f"[!] Standard table 'Траффик-лист_*' for {ddmmyy} not found.")
+    print(f"    Found non-standard file: {other.name}")
     if interactive:
         try:
-            ans = input("    Использовать его для сборки? (y/n): ").strip().lower()
+            ans = input("    Use it for assembly? (y/n): ").strip().lower()
         except EOFError:
             ans = "n"
     else:
-        print("    Используется автоматически (запущено без --manual).")
+        print("    Using automatically (running without --manual).")
         ans = "y"
     if ans in ("y", "yes", "д", "да"):
-        log.log(f"[!] ВНИМАНИЕ: используется НЕТИПИЧНЫЙ файл {other.name}", to_console=False)
+        log.log(f"[!] WARNING: using NON-STANDARD file {other.name}", to_console=False)
         return other
-    raise AssemblyError("Сборка отменена: подходящая таблица не выбрана.")
+    raise AssemblyError("Assembly cancelled: no suitable table selected.")
 
 
-# ---------- оркестратор авто-режима ----------
+# ---------- auto mode orchestrator ----------
 
 
 def run_dry_check(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
                   dst_root: Path, log, interactive: bool = True) -> int:
-    """DRY-RUN: все проверки без единого перекода и без записи файлов.
-    Показывает, пойдёт ли смена в сборку."""
-    print(f"\n=== ПРОВЕРКА (dry-run) на {ddmmyy} ===\n")
-    problems = []   # критические
-    warnings = []   # некритические (потребуют действий, но не блокеры)
+    """DRY-RUN: all checks without any transcode or file writes.
+    Shows whether the session is ready for assembly."""
+    print(f"\n=== CHECK (dry-run) for {ddmmyy} ===\n")
+    problems = []   # critical blockers
+    warnings = []   # non-critical (require action but won't stop assembly)
 
-    # инструменты
+    # tools
     try:
         ffmpeg = _resolve_tool("ffmpeg", conf["ffmpeg"])
         ffprobe = _resolve_tool("ffprobe", conf["ffprobe"])
         print(f"ffmpeg:  {ffmpeg}")
         print(f"ffprobe: {ffprobe}")
     except AssemblyError as e:
-        print(_red(f"[КРИТИЧНО] {e}"))
+        print(_red(f"[CRITICAL] {e}"))
         return 1
 
-    # обёртки
+    # wrappers
     opener = Path(conf["opener"]) if conf["opener"] else None
     closer = Path(conf["closer"]) if conf["closer"] else None
     for nm, w in (("opener", opener), ("closer", closer)):
         if not w or not w.is_file():
-            problems.append(f"Обёртка {nm} не найдена: {conf.get(nm)!r}")
+            problems.append(f"Wrapper {nm} not found: {conf.get(nm)!r}")
         else:
             try:
                 lay = probe_audio_layout(w, ffprobe)
                 if lay not in ("2mono", "1stereo"):
-                    problems.append(f"Обёртка {w.name}: неподходящее аудио ({lay})")
+                    problems.append(f"Wrapper {w.name}: unsuitable audio layout ({lay})")
             except AssemblyError as e:
                 problems.append(str(e))
 
-    # таблица
+    # table
     try:
         table = pick_table_for_assembly(xlsx_dir, ddmmyy, log, interactive=interactive)
-        print(f"Таблица: {table.name}")
+        print(f"Table: {table.name}")
         blocks = parse_blocks(table)
-        print(f"Блоков: {len(blocks)}")
+        print(f"Blocks: {len(blocks)}")
     except AssemblyError as e:
-        print(_red(f"[КРИТИЧНО] {e}"))
+        print(_red(f"[CRITICAL] {e}"))
         return 1
 
-    # суммы хронометража по таблице (арифметика вёрстки)
+    # table arithmetic duration sums
     bad_sums = []
     for b in blocks:
-        s = sum(b["chron"].get(fid, 0) for fid in b["ids"])
-        # сумма по строкам сверяется с ИТОГО (внимание: при дублях ID суммируем по строкам)
+        # row-by-row sum compared to ИТОГО (with duplicates, sum per row)
         row_sum = 0
         for fid in b["ids"]:
             row_sum += b["chron"].get(fid, 0)
@@ -102,9 +101,9 @@ def run_dry_check(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
             bad_sums.append((b["time"], row_sum, b["itogo"]))
     if bad_sums:
         for tm, got, exp in bad_sums:
-            warnings.append(f"Блок {tm}: сумма хрон по таблице {got} ≠ ИТОГО {exp}")
+            warnings.append(f"Block {tm}: table chron sum {got} != ИТОГО {exp}")
 
-    # наличие файлов + резерв
+    # file presence + fallback check
     missing = check_all_files_exist(blocks, src_dir)
     need_recovery = []
     not_anywhere = []
@@ -122,15 +121,15 @@ def run_dry_check(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
             else:
                 not_anywhere.append(fid)
         if need_recovery:
-            warnings.append(f"Будут добраны из резерва (AVI→XDCAM): {len(need_recovery)} — "
+            warnings.append(f"Will be recovered from backup (AVI->XDCAM): {len(need_recovery)} — "
                             + ", ".join(map(str, need_recovery[:20]))
                             + (" ..." if len(need_recovery) > 20 else ""))
         if not_anywhere:
-            problems.append(f"Нет ни в src, ни в резерве: {len(not_anywhere)} — "
+            problems.append(f"Not in src or backup: {len(not_anywhere)} — "
                             + ", ".join(map(str, not_anywhere[:20]))
                             + (" ..." if len(not_anywhere) > 20 else ""))
 
-    # аудио-раскладки имеющихся роликов
+    # audio layouts of existing clips
     seen = set()
     fixable = []
     none_audio = []
@@ -141,146 +140,147 @@ def run_dry_check(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
             seen.add(fid)
             f = src_dir / f"{fid}{EXT}"
             if not f.is_file():
-                continue  # отсутствующие уже учтены выше
+                continue  # missing files already accounted for above
             try:
                 lay = classify_audio_layout(probe_audio_streams(f, ffprobe))
             except AssemblyError:
-                problems.append(f"Не удалось прочитать аудио: {f.name}")
+                problems.append(f"Could not read audio: {f.name}")
                 continue
             if lay == "none":
                 none_audio.append(fid)
             elif lay == "fixable":
                 fixable.append(fid)
     if none_audio:
-        problems.append(f"Без аудиодорожек (критично): {len(none_audio)} — "
+        problems.append(f"No audio tracks (critical): {len(none_audio)} — "
                         + ", ".join(map(str, none_audio[:20])))
     if fixable:
-        warnings.append(f"Потребуют аудио-фикса (→2 моно): {len(fixable)} — "
+        warnings.append(f"Require audio fix (->2 mono): {len(fixable)} — "
                         + ", ".join(map(str, fixable[:20]))
                         + (" ..." if len(fixable) > 20 else ""))
 
-    # итоговый отчёт
-    print("\n--- РЕЗУЛЬТАТ ПРОВЕРКИ ---")
+    # summary report
+    print("\n--- CHECK RESULT ---")
     if warnings:
-        print("\nПредупреждения (не блокируют, но потребуют действий):")
+        print("\nWarnings (non-blocking, but require action):")
         for w in warnings:
-            print(f"  • {w}")
+            print(f"  * {w}")
             log.log(f"[DRY-RUN warning] {w}", to_console=False)
     if problems:
-        print(_red("\nКритические проблемы (сборка не пойдёт):"))
+        print(_red("\nCritical issues (assembly will not start):"))
         for p in problems:
-            print(_red(f"  ✗ {p}"))
+            print(_red(f"  x {p}"))
             log.log(f"[DRY-RUN critical] {p}", to_console=False)
-        print(_red(f"\nИТОГ: смена НЕ готова к сборке — {len(problems)} критич., "
-                   f"{len(warnings)} предупр."))
+        print(_red(f"\nRESULT: session NOT ready — {len(problems)} critical, "
+                   f"{len(warnings)} warning(s)."))
         return 1
     else:
         if warnings:
-            print(f"\nИТОГ: смена пойдёт в сборку с авто-обработкой "
-                  f"({len(warnings)} предупр., критич. нет).")
+            print(f"\nRESULT: session will proceed with auto-handling "
+                  f"({len(warnings)} warning(s), no critical issues).")
         else:
-            print("\nИТОГ: всё чисто, смена полностью готова к сборке.")
+            print("\nRESULT: all clear, session is fully ready for assembly.")
         return 0
 
 
 
 def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
                   dst_root: Path, log, interactive: bool = True) -> int:
-    # инструменты
+    # tools
     ffmpeg = _resolve_tool("ffmpeg", conf["ffmpeg"])
     ffprobe = _resolve_tool("ffprobe", conf["ffprobe"])
 
-    # обёртки
+    # wrappers
     opener = Path(conf["opener"]) if conf["opener"] else None
     closer = Path(conf["closer"]) if conf["closer"] else None
     if not opener or not opener.is_file():
-        raise AssemblyError(f"Открывашка не найдена (conf [assembly] opener): {conf['opener']!r}")
+        raise AssemblyError(f"Opener not found (conf [assembly] opener): {conf['opener']!r}")
     if not closer or not closer.is_file():
-        raise AssemblyError(f"Закрывашка не найдена (conf [assembly] closer): {conf['closer']!r}")
+        raise AssemblyError(f"Closer not found (conf [assembly] closer): {conf['closer']!r}")
 
     audio_layout = "stereo" if conf["audio_layout"] == "stereo" else "2mono"
     video_mode = "reencode" if conf["video_mode"] == "reencode" else "copy"
     out_format = conf.get("output_format", "mxf")
     if out_format not in FORMAT_EXT:
-        log.log(f"[!] Неизвестный output_format {out_format!r}, используется mxf.")
+        log.log(f"[!] Unknown output_format {out_format!r}, falling back to mxf.")
         out_format = "mxf"
     out_ext = FORMAT_EXT[out_format]
+    h264_bitrate = conf.get("h264_bitrate", "16m") or "16m"
 
-    # длительности обёрток (один раз)
+    # wrapper durations (probed once)
     d_open = get_duration(opener, ffprobe)
     d_close = get_duration(closer, ffprobe)
-    log.log(f"Открывашка: {opener.name} ({d_open:.2f}s)")
-    log.log(f"Закрывашка: {closer.name} ({d_close:.2f}s)")
+    log.log(f"Opener: {opener.name} ({d_open:.2f}s)")
+    log.log(f"Closer: {closer.name} ({d_close:.2f}s)")
 
-    # проверка раскладки обёрток (их не чиним — должны быть эталонными)
+    # wrapper audio layout check (wrappers are not fixed — must be canonical)
     for w in (opener, closer):
         lay = probe_audio_layout(w, ffprobe)
         if lay not in ("2mono", "1stereo"):
             raise AssemblyError(
-                f"У обёртки {w.name} неподходящая аудио-раскладка ({lay}). "
-                f"Ожидается 2 моно или 1 стерео. Обёртки не правятся автоматически.",
+                f"Wrapper {w.name} has unsuitable audio layout ({lay}). "
+                f"Expected 2 mono or 1 stereo. Wrappers are not fixed automatically.",
                 handler=3, payload={"file": str(w)})
 
-    # таблица
+    # table
     table = pick_table_for_assembly(xlsx_dir, ddmmyy, log, interactive=interactive)
-    log.log(f"Таблица: {table.name}")
+    log.log(f"Table: {table.name}")
     blocks = parse_blocks(table)
-    log.log(f"Блоков: {len(blocks)}")
+    log.log(f"Blocks: {len(blocks)}")
 
-    # ОБРАБОТЧИК 1: все файлы на месте? Чего нет — добираем из резерва.
+    # HANDLER 1: all files present? Missing ones recovered from backup.
     missing = check_all_files_exist(blocks, src_dir)
     if missing:
         missing_ids = sorted({fid for _, fid in missing})
-        log.log(f"Не найдено в src файлов: {len(missing_ids)} уникальных ID")
+        log.log(f"Files missing from src: {len(missing_ids)} unique IDs")
         backup_dir = Path(conf["backup_source"]) if conf["backup_source"] else None
 
         if not backup_dir or not backup_dir.is_dir():
-            log.log(f"[ОШИБКА] Резервный источник не задан/не найден "
+            log.log(f"[ERROR] Backup source not set/not found "
                     f"(conf [assembly] backup_source): {conf['backup_source']!r}")
             for bi, fid in missing[:50]:
-                log.log(f"  блок {blocks[bi]['time']}: {fid}{EXT}", to_console=False)
+                log.log(f"  block {blocks[bi]['time']}: {fid}{EXT}", to_console=False)
             raise AssemblyError(
-                f"Не хватает {len(missing_ids)} файлов, резервный источник недоступен.",
+                f"{len(missing_ids)} files missing, backup source unavailable.",
                 handler=1, payload={"missing": missing_ids})
 
-        print(f"\nНедостающих роликов: {len(missing_ids)}. "
-              f"Поиск и перекодирование из резерва ({backup_dir})...")
-        log.log(f"Добор из резерва: {backup_dir.resolve()}")
+        print(f"\nMissing clips: {len(missing_ids)}. "
+              f"Searching and transcoding from backup ({backup_dir})...")
+        log.log(f"Backup source: {backup_dir.resolve()}")
         recovered, still_missing = recover_missing_from_backup(
             missing_ids, backup_dir, src_dir, ffmpeg, log)
-        log.log(f"Добрано и перекодировано: {len(recovered)}")
-        print(f"Добрано из резерва: {len(recovered)} из {len(missing_ids)}")
+        log.log(f"Recovered and transcoded: {len(recovered)}")
+        print(f"Recovered from backup: {len(recovered)} of {len(missing_ids)}")
 
         if still_missing:
-            log.log(f"[ОШИБКА] Не найдено ни в src, ни в резерве: {len(still_missing)}")
+            log.log(f"[ERROR] Not found in src or backup: {len(still_missing)}")
             for fid in still_missing:
                 log.log(f"  {fid}.avi", to_console=False)
-            print(_red(f"\n[КРИТИЧЕСКАЯ ОШИБКА] {len(still_missing)} роликов "
-                       f"нет ни в src, ни в резерве (см. лог)."))
+            print(_red(f"\n[CRITICAL ERROR] {len(still_missing)} clips "
+                       f"not found in src or backup (see log)."))
             raise AssemblyError(
-                f"{len(still_missing)} роликов отсутствуют везде — сборка невозможна.",
+                f"{len(still_missing)} clips are missing everywhere — assembly impossible.",
                 handler=1, payload={"still_missing": still_missing})
 
-    # выходная папка: всегда подпапка "эфир на ДДММГГ".
-    # база = output_dir из conf, если задан, иначе dst.
+    # output folder: always a subfolder named "broadcast DDMMYY".
+    # base = output_dir from conf if set, otherwise dst.
     out_base = Path(conf["output_dir"]) if conf["output_dir"] else dst_root
-    out_dir = out_base / f"эфир на {ddmmyy}"
+    out_dir = out_base / f"broadcast {ddmmyy}"
     out_dir.mkdir(parents=True, exist_ok=True)
-    log.log(f"Папка вывода: {out_dir.resolve()}")
+    log.log(f"Output folder: {out_dir.resolve()}")
 
-    # база для временных файлов (norm_NNN.mxf, audiofix)
+    # temp base for intermediate files (norm_NNN.mxf, audiofix)
     _td = conf.get("temp_dir", "").strip()
     tmp_base = (Path(_td) / ddmmyy) if _td else out_dir
     if _td:
         tmp_base.mkdir(parents=True, exist_ok=True)
-        log.log(f"Папка temp:   {tmp_base.resolve()}")
+        log.log(f"Temp folder:  {tmp_base.resolve()}")
     log.log("")
 
-    # ОБРАБОТЧИК 3: единый аудио-проход по всем уникальным роликам ДО сборки.
-    # none -> критическая остановка; fixable -> копим, спрашиваем один раз, чиним.
+    # HANDLER 3: single audio scan across all unique clips BEFORE assembly.
+    # none -> critical stop; fixable -> collect, ask once, fix.
     audiofix_dir = tmp_base / "_audiofix"
-    fix_map = {}            # {исходный путь -> путь исправленного файла}
-    layout_cache = {}       # {путь -> раскладка} чтобы не probe-ить повторно
+    fix_map = {}            # {original path -> path to fixed file}
+    layout_cache = {}       # {path -> layout} to avoid re-probing
     unique_ids = []
     seen = set()
     for b in blocks:
@@ -297,46 +297,46 @@ def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
         layout_cache[f] = lay
         if lay == "none":
             raise AssemblyError(
-                f"У файла {f.name} нет аудиодорожек. Это критическая ошибка — "
-                f"файл нужно подготовить вручную.",
+                f"{f.name} has no audio tracks. This is a critical error — "
+                f"the file must be prepared manually.",
                 handler=3, payload={"file": str(f)})
         if lay == "fixable":
             fixable.append((f, chans))
 
     if fixable:
-        print(_red(f"\nНайдено файлов с нестандартным аудио: {len(fixable)}"))
+        print(_red(f"\nFiles with non-standard audio: {len(fixable)}"))
         for f, chans in fixable:
-            print(_red(f"  {f.name}: дорожки/каналы = {chans}"))
-            log.log(f"[ОБРАБОТЧИК 3] нестандартное аудио: {f.name} (каналы {chans})",
+            print(_red(f"  {f.name}: tracks/channels = {chans}"))
+            log.log(f"[HANDLER 3] non-standard audio: {f.name} (channels {chans})",
                     to_console=False)
         if interactive:
             try:
-                ans = input("Сконвертировать все к эфирному формату (2 моно 24/48)? (y/n): ").strip().lower()
+                ans = input("Convert all to broadcast format (2 mono 24/48)? (y/n): ").strip().lower()
             except EOFError:
                 ans = "n"
         else:
-            print("Авто-конвертация (запущено без --manual).")
+            print("Auto-converting (running without --manual).")
             ans = "y"
         if ans not in ("y", "yes", "д", "да"):
             raise AssemblyError(
-                "Сборка отменена: есть файлы с нестандартным аудио, "
-                "конвертация не подтверждена.",
+                "Assembly cancelled: non-standard audio files present, "
+                "conversion not confirmed.",
                 handler=3, payload={"files": [str(f) for f, _ in fixable]})
-        # чиним каждый в _audiofix
+        # fix each file into _audiofix
         audiofix_dir.mkdir(parents=True, exist_ok=True)
-        print("Конвертация аудио...")
+        print("Converting audio...")
         for f, chans in fixable:
             fixed = audiofix_dir / f.name
             fix_audio_to_2mono(f, fixed, chans, ffmpeg, log)
             fix_map[f] = fixed
-            # исправленный файл имеет целевые 2 моно
+            # fixed file has the target 2-mono layout
             layout_cache[fixed] = "2mono"
-            log.log(f"  исправлен: {f.name} -> {fixed}", to_console=False)
-        log.log(f"Исправлено файлов: {len(fix_map)}")
+            log.log(f"  fixed: {f.name} -> {fixed}", to_console=False)
+        log.log(f"Fixed files: {len(fix_map)}")
 
     date_part = ddmmyy_to_dashed(ddmmyy)
 
-    # резолвим число воркеров
+    # resolve worker count
     try:
         workers = int(conf.get("workers", "1"))
     except (ValueError, TypeError):
@@ -345,15 +345,15 @@ def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
         workers = os.cpu_count() or 1
 
     if workers == 1:
-        log.log("Режим сборки: последовательный (workers=1).")
-        print("[i] Режим сборки: последовательный (workers=1).")
+        log.log("Assembly mode: sequential (workers=1).")
+        print("[i] Assembly mode: sequential (workers=1).")
     else:
-        log.log(f"Режим сборки: параллельный ({workers} воркеров).")
-        print(f"[i] Режим сборки: параллельный ({workers} воркеров).")
+        log.log(f"Assembly mode: parallel ({workers} workers).")
+        print(f"[i] Assembly mode: parallel ({workers} workers).")
 
     def build_one(b):
-        """Собирает один блок. Возвращает dict с результатом.
-        Не задаёт вопросов — годится и для параллельного, и для последовательного."""
+        """Assembles one block. Returns a result dict.
+        Does not ask questions — suitable for both sequential and parallel modes."""
         tpart = time_to_filepart(b["time"])
         out_name = f"{date_part}_{conf['middle']}_{tpart}{out_ext}"
         out_path = out_dir / out_name
@@ -373,15 +373,15 @@ def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
             layouts.append("1stereo" if lay == "1stereo" else "2mono")
 
         tmp_files = []
-        # уникальная temp-подпапка на блок (важно для параллельности — не пересекаться)
+        # unique temp subfolder per block (critical for parallel mode — avoid name collisions)
         block_tmp = tmp_base / "_tmp" / tpart
         if video_mode == "reencode":
             assemble_block_reencode(inputs, layouts, out_path, ffmpeg, audio_layout, log,
-                                    out_format=out_format)
+                                    out_format=out_format, h264_bitrate=h264_bitrate)
         else:
             tmp_files = assemble_block_copy(inputs, layouts, out_path, ffmpeg,
                                             audio_layout, block_tmp, log,
-                                            out_format=out_format)
+                                            out_format=out_format, h264_bitrate=h264_bitrate)
 
         ok, exp_f, got_f = verify_block_duration(out_path, b["itogo"], d_open, d_close, ffprobe)
         return {"block": b, "out_name": out_name, "ok": ok,
@@ -398,17 +398,17 @@ def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
     built = 0
     failed_blocks = []
 
-    # ===== ПОСЛЕДОВАТЕЛЬНО (workers=1): с вопросами при ошибке =====
+    # ===== SEQUENTIAL (workers=1): asks on error =====
     if workers == 1:
         bar = Progress(total=len(blocks))
         for b in blocks:
             res = build_one(b)
             if not res["ok"]:
                 bar.finish()
-                print(_red(f"\n[КРИТИЧЕСКАЯ ОШИБКА] Блок {b['time']} ({res['out_name']}): "
-                           f"ожидалось {res['exp']} кадров ({b['itogo']}с), получено {res['got']}."))
-                log.log(f"[КРИТИЧЕСКАЯ ОШИБКА ХРОНОМЕТРАЖА] {res['out_name']}: "
-                        f"ожидалось {res['exp']} кадров ({b['itogo']}с), получено {res['got']}",
+                print(_red(f"\n[CRITICAL ERROR] Block {b['time']} ({res['out_name']}): "
+                           f"expected {res['exp']} frames ({b['itogo']}s), got {res['got']}."))
+                log.log(f"[CRITICAL DURATION ERROR] {res['out_name']}: "
+                        f"expected {res['exp']} frames ({b['itogo']}s), got {res['got']}",
                         to_console=False)
                 try:
                     fresh_blocks = parse_blocks(table)
@@ -419,8 +419,8 @@ def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
                 failed_blocks.append((b["time"], res["out_name"], res["exp"], res["got"]))
                 if not (ask_continue_after_error() if interactive else True):
                     log.log("")
-                    log.log("Сборка остановлена пользователем после ошибки хронометража.")
-                    print("\nСборка остановлена.")
+                    log.log("Assembly stopped by user after duration error.")
+                    print("\nAssembly stopped.")
                     _report_assembly(log, built, failed_blocks, len(blocks), out_dir)
                     return 1
                 print()
@@ -432,11 +432,11 @@ def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
             bar.update(res["out_name"])
         bar.finish()
 
-    # ===== ПАРАЛЛЕЛЬНО (workers>1): без вопросов, всё в отчёт =====
+    # ===== PARALLEL (workers>1): no prompts, all errors go to the report =====
     else:
         from concurrent.futures import ThreadPoolExecutor, as_completed
         import threading
-        print(f"Параллельная сборка: {workers} воркеров, блоков {len(blocks)}\n")
+        print(f"Parallel assembly: {workers} workers, {len(blocks)} blocks\n")
         lock = threading.Lock()
         done = 0
         total = len(blocks)
@@ -457,20 +457,20 @@ def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
                 results.append(res)
                 with lock:
                     done += 1
-                    status = "ok" if res.get("ok") else "ОШИБКА"
+                    status = "ok" if res.get("ok") else "ERROR"
                     print(f"  [{done}/{total}] {res['out_name']}: {status}", flush=True)
 
-        # разбор результатов
+        # process results
         for res in results:
             if res.get("error"):
                 failed_blocks.append((res["block"]["time"], res["out_name"],
                                       None, None))
-                log.log(f"[ОШИБКА СБОРКИ] {res['out_name']}: {res['error']}",
+                log.log(f"[ASSEMBLY ERROR] {res['out_name']}: {res['error']}",
                         to_console=False)
             elif not res.get("ok"):
                 b = res["block"]
-                log.log(f"[КРИТИЧЕСКАЯ ОШИБКА ХРОНОМЕТРАЖА] {res['out_name']}: "
-                        f"ожидалось {res['exp']} кадров ({b['itogo']}с), получено {res['got']}",
+                log.log(f"[CRITICAL DURATION ERROR] {res['out_name']}: "
+                        f"expected {res['exp']} frames ({b['itogo']}s), got {res['got']}",
                         to_console=False)
                 try:
                     fresh_blocks = parse_blocks(table)
@@ -483,7 +483,7 @@ def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
                 cleanup_tmp(res["tmp_files"])
                 built += 1
 
-    # подчистить _tmp
+    # clean up _tmp
     import shutil as _sh
     tmp_root = tmp_base / "_tmp"
     if tmp_root.exists():
@@ -491,13 +491,13 @@ def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
             _sh.rmtree(tmp_root, ignore_errors=True)
         except OSError:
             pass
-    # подчистить _audiofix при полном успехе
+    # clean up _audiofix on full success
     if not failed_blocks and fix_map:
         try:
             _sh.rmtree(audiofix_dir, ignore_errors=True)
         except OSError:
             pass
-    # если использовали внешний temp_dir и он теперь пуст — убрать подпапку даты
+    # if an external temp_dir was used and is now empty — remove the date subfolder
     if _td:
         try:
             tmp_base.rmdir()
@@ -510,16 +510,15 @@ def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
 
 
 def _report_assembly(log, built: int, failed_blocks: list, total: int, out_dir: Path):
-    """Итоговый отчёт по авто-сборке."""
+    """Final report for auto-mode assembly."""
     log.log("")
-    log.log(f"Собрано блоков: {built} из {total}")
+    log.log(f"Blocks assembled: {built} of {total}")
     if failed_blocks:
-        log.log(f"Блоков с ошибкой хронометража: {len(failed_blocks)}")
+        log.log(f"Blocks with duration errors: {len(failed_blocks)}")
         for tm, name, exp_f, got_f in failed_blocks:
-            log.log(f"  - {tm} ({name}): ожидалось {exp_f}, получено {got_f}",
+            log.log(f"  - {tm} ({name}): expected {exp_f}, got {got_f}",
                     to_console=False)
-        print(_red(f"\nСобрано {built} из {total}. "
-                   f"Блоков с ошибкой: {len(failed_blocks)} (см. лог)."))
+        print(_red(f"\nAssembled {built} of {total}. "
+                   f"Blocks with errors: {len(failed_blocks)} (see log)."))
     else:
-        print(f"\nУспешно собрано {built} эфирных файлов в: {out_dir.resolve()}")
-
+        print(f"\nSuccessfully assembled {built} broadcast files in: {out_dir.resolve()}")
