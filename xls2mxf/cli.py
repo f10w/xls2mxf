@@ -160,7 +160,7 @@ def main() -> int:
         log.log("Processing traffic sheets:")
         all_ids = set()
         for x in xlsx_files:
-            got = extract_ids(x)
+            got = extract_ids(x, conf["header_id"])
             all_ids |= got
             log.log(f"  - {x.name}: {len(got)} IDs")
         log.log(f"Total unique IDs: {len(all_ids)}")
@@ -233,7 +233,7 @@ def main() -> int:
             ans = "n"
         if ans in ("y", "yes", "д", "да"):
             source = xlsx_files[0]  # read first table (alphabetical order)
-            lines = read_id_column_raw(source, conf["customlines"])
+            lines = read_id_column_raw(source, conf["customlines"], conf["header_id"])
             if not lines:
                 print("[!] Could not read ID column for clipboard.")
                 log.log(f"Clipboard: could not read column from {source.name}",

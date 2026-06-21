@@ -1,7 +1,6 @@
 """Project constants."""
 import re
 
-HEADER_TEXT = "ID ролика"  # column header used to locate the ID column (may be F, J, ...)
 EXT = ".mxf"  # extension of source clips — always .mxf
 
 # output file extensions by format
@@ -62,6 +61,14 @@ h264_bitrate = 16m
 ; A date-named subfolder (DDMMYY) is created and removed automatically.
 ; Empty = temp files are created alongside the output files (in output_dir/dst).
 temp_dir =
+[table]
+; column header that identifies the clip ID column (text in the header row, any column)
+header_id = ID ролика
+; keyword in column D that marks the block totals row
+header_total = ИТОГО
+; filename prefix that identifies the standard traffic sheet
+sheet_prefix = Траффик-лист
+
 ; Number of parallel ffmpeg processes during block assembly.
 ;
 ;   workers = 1   — SEQUENTIAL [default, recommended]

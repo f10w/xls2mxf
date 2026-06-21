@@ -4,28 +4,28 @@ from pathlib import Path
 
 import openpyxl
 
-from .constants import HEADER_TEXT, EXT, DATE_RE
+from .constants import EXT, DATE_RE
 from .errors import AssemblyError
 
 
-def _find_id_column(ws) -> int | None:
-    """Searches for the column with HEADER_TEXT header. Returns (col_index 1-based,
+def _find_id_column(ws, header_id: str) -> int | None:
+    """Finds the column whose header matches header_id. Returns (col_index 1-based,
     header_row) or None. Searches within the first 10 rows of the sheet."""
     for row in ws.iter_rows(min_row=1, max_row=10):
         for cell in row:
-            if isinstance(cell.value, str) and cell.value.strip() == HEADER_TEXT:
+            if isinstance(cell.value, str) and cell.value.strip() == header_id:
                 return cell.column, cell.row
     return None
 
 
 
-def extract_ids(xlsx_path: Path) -> set:
-    """Extracts integer IDs from the column found by the 'ID ролика' header.
+def extract_ids(xlsx_path: Path, header_id: str = "ID ролика") -> set:
+    """Extracts integer IDs from the column identified by header_id.
     Works regardless of which column (F, J, ...) it occupies."""
     ids = set()
     wb = openpyxl.load_workbook(xlsx_path, data_only=True, read_only=True)
     for ws in wb.worksheets:
-        found = _find_id_column(ws)
+        found = _find_id_column(ws, header_id)
         if not found:
             continue  # this sheet has no ID column
         col, header_row = found
@@ -58,15 +58,16 @@ def find_xlsx_for_date(xlsx_dir: Path, ddmmyy: str) -> list:
 
 
 
-def read_id_column_raw(xlsx_path: Path, customlines: list) -> list:
-    """Reads the 'ID ролика' column TOP-TO-BOTTOM as-is: no sorting, no dedup.
-    Each gap (one or more empty rows between data blocks) is replaced with
+def read_id_column_raw(xlsx_path: Path, customlines: list,
+                       header_id: str = "ID ролика") -> list:
+    """Reads the ID column (identified by header_id) TOP-TO-BOTTOM as-is: no sorting,
+    no dedup. Each gap (one or more empty rows between data blocks) is replaced with
     exactly three customlines entries. Leading and trailing empty rows are dropped.
 
     Returns a list of strings ready for line-by-line paste (like a column in Excel)."""
     wb = openpyxl.load_workbook(xlsx_path, data_only=True, read_only=True)
     ws = wb.active
-    found = _find_id_column(ws)
+    found = _find_id_column(ws, header_id)
     if not found:
         wb.close()
         return []
@@ -110,19 +111,21 @@ def read_id_column_raw(xlsx_path: Path, customlines: list) -> list:
 
 
 
-def parse_blocks(xlsx_path: Path) -> list:
+def parse_blocks(xlsx_path: Path,
+                 header_id: str = "ID ролика",
+                 header_total: str = "ИТОГО") -> list:
     """Slices a traffic sheet into blocks. Returns a list of dicts:
        {time: 'HH:MM', ids: [int,...], itogo: int|None}.
     A block = consecutive rows with a number in the ID column; terminated by an
-    empty-ID row. Time comes from column A of the first row of the block. ИТОГО
-    comes from column E ('Хрон.') in the row where column D == 'ИТОГО'."""
+    empty-ID row. Time comes from column A of the first row of the block. The total
+    comes from column E in the row where column D == header_total."""
     import datetime as _dt
     wb = openpyxl.load_workbook(xlsx_path, data_only=True, read_only=True)
     ws = wb.active
-    found = _find_id_column(ws)
+    found = _find_id_column(ws, header_id)
     if not found:
         wb.close()
-        raise AssemblyError(f"Column 'ID ролика' not found in {xlsx_path.name}.")
+        raise AssemblyError(f"Column {header_id!r} not found in {xlsx_path.name}.")
     id_col, header_row = found
 
     blocks = []
@@ -157,8 +160,8 @@ def parse_blocks(xlsx_path: Path) -> list:
                 elif a_val not in (None, ""):
                     cur_time = str(a_val).strip()
         else:
-            # row without ID — could be ИТОГО or blank
-            if isinstance(d_val, str) and d_val.strip().upper() == "ИТОГО":
+            # row without ID — could be the totals row or blank
+            if isinstance(d_val, str) and d_val.strip().upper() == header_total.upper():
                 if isinstance(e_val, (int, float)):
                     pending_itogo = int(e_val)
             # close the block: accumulated clips + encountered a gap

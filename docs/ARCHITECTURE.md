@@ -13,7 +13,7 @@ run.py                  Thin launcher. PyInstaller entry point (→ xls2mxf.exe)
 xls2mxf/
   __init__.py           ANSI console setup for Windows, version.
   __main__.py           Entry point for `python -m xls2mxf`.
-  constants.py          EXT, FPS, HEADER_TEXT, DATE_RE, DEFAULT_CONF.
+  constants.py          EXT, FPS, DATE_RE, DEFAULT_CONF.
   errors.py             AssemblyError (with handler field: 1/2/3).
   config.py             load_conf(), app_dir().
   ui.py                 Logger, Progress, _red(), dialogs, clipboard.

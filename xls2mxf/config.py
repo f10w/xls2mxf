@@ -36,10 +36,11 @@ def load_conf() -> dict:
         print()
     cp = configparser.ConfigParser()
     cp.read(conf_path, encoding="utf-8")
-    p = cp["paths"] if cp.has_section("paths") else {}
+    p = cp["paths"]    if cp.has_section("paths")    else {}
     c = cp["clipboard"] if cp.has_section("clipboard") else {}
-    f = cp["ffmpeg"] if cp.has_section("ffmpeg") else {}
+    f = cp["ffmpeg"]   if cp.has_section("ffmpeg")   else {}
     a = cp["assembly"] if cp.has_section("assembly") else {}
+    t = cp["table"]    if cp.has_section("table")    else {}
     return {
         "xlsx": p.get("xlsx", "."),
         "src": p.get("src", "."),
@@ -62,4 +63,7 @@ def load_conf() -> dict:
         "h264_bitrate": a.get("h264_bitrate", "16m").strip(),
         "temp_dir": a.get("temp_dir", "").strip(),
         "workers": a.get("workers", "1").strip(),
+        "header_id":    t.get("header_id",    "ID ролика").strip(),
+        "header_total": t.get("header_total", "ИТОГО").strip(),
+        "sheet_prefix": t.get("sheet_prefix", "Траффик-лист").strip(),
     }

@@ -17,19 +17,20 @@ from .handlers import (recover_missing_from_backup, verify_block_duration,
 
 
 def pick_table_for_assembly(xlsx_dir: Path, ddmmyy: str, log,
-                             interactive: bool = True) -> Path:
+                             interactive: bool = True,
+                             sheet_prefix: str = "Траффик-лист") -> Path:
     """1) Traffic sheet matching the date -> use it.
        2) No traffic sheet but another xlsx found -> warn and ask y/n (or auto-accept).
        3) Nothing found -> error."""
     candidates = find_xlsx_for_date(xlsx_dir, ddmmyy)
     if not candidates:
         raise AssemblyError(f"No tables found matching date {ddmmyy}.")
-    traffic = [x for x in candidates if x.name.lower().startswith("траффик-лист")]
+    traffic = [x for x in candidates if x.name.lower().startswith(sheet_prefix.lower())]
     if traffic:
         return traffic[0]
     # non-standard file
     other = candidates[0]
-    print(f"[!] Standard table 'Траффик-лист_*' for {ddmmyy} not found.")
+    print(f"[!] Standard table '{sheet_prefix}_*' for {ddmmyy} not found.")
     print(f"    Found non-standard file: {other.name}")
     if interactive:
         try:
@@ -80,11 +81,17 @@ def run_dry_check(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
             except AssemblyError as e:
                 problems.append(str(e))
 
+    header_id    = conf.get("header_id",    "ID ролика")
+    header_total = conf.get("header_total", "ИТОГО")
+    sheet_prefix = conf.get("sheet_prefix", "Траффик-лист")
+
     # table
     try:
-        table = pick_table_for_assembly(xlsx_dir, ddmmyy, log, interactive=interactive)
+        table = pick_table_for_assembly(xlsx_dir, ddmmyy, log,
+                                        interactive=interactive,
+                                        sheet_prefix=sheet_prefix)
         print(f"Table: {table.name}")
-        blocks = parse_blocks(table)
+        blocks = parse_blocks(table, header_id=header_id, header_total=header_total)
         print(f"Blocks: {len(blocks)}")
     except AssemblyError as e:
         print(_red(f"[CRITICAL] {e}"))
@@ -93,7 +100,6 @@ def run_dry_check(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
     # table arithmetic duration sums
     bad_sums = []
     for b in blocks:
-        # row-by-row sum compared to ИТОГО (with duplicates, sum per row)
         row_sum = 0
         for fid in b["ids"]:
             row_sum += b["chron"].get(fid, 0)
@@ -101,7 +107,7 @@ def run_dry_check(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
             bad_sums.append((b["time"], row_sum, b["itogo"]))
     if bad_sums:
         for tm, got, exp in bad_sums:
-            warnings.append(f"Block {tm}: table chron sum {got} != ИТОГО {exp}")
+            warnings.append(f"Block {tm}: table chron sum {got} != {header_total} {exp}")
 
     # file presence + fallback check
     missing = check_all_files_exist(blocks, src_dir)
@@ -205,6 +211,9 @@ def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
         out_format = "mxf"
     out_ext = FORMAT_EXT[out_format]
     h264_bitrate = conf.get("h264_bitrate", "16m") or "16m"
+    header_id    = conf.get("header_id",    "ID ролика")
+    header_total = conf.get("header_total", "ИТОГО")
+    sheet_prefix = conf.get("sheet_prefix", "Траффик-лист")
 
     # wrapper durations (probed once)
     d_open = get_duration(opener, ffprobe)
@@ -222,9 +231,11 @@ def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
                 handler=3, payload={"file": str(w)})
 
     # table
-    table = pick_table_for_assembly(xlsx_dir, ddmmyy, log, interactive=interactive)
+    table = pick_table_for_assembly(xlsx_dir, ddmmyy, log,
+                                    interactive=interactive,
+                                    sheet_prefix=sheet_prefix)
     log.log(f"Table: {table.name}")
-    blocks = parse_blocks(table)
+    blocks = parse_blocks(table, header_id=header_id, header_total=header_total)
     log.log(f"Blocks: {len(blocks)}")
 
     # HANDLER 1: all files present? Missing ones recovered from backup.
@@ -411,7 +422,7 @@ def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
                         f"expected {res['exp']} frames ({b['itogo']}s), got {res['got']}",
                         to_console=False)
                 try:
-                    fresh_blocks = parse_blocks(table)
+                    fresh_blocks = parse_blocks(table, header_id=header_id, header_total=header_total)
                     fresh = next((fb for fb in fresh_blocks if fb["time"] == b["time"]), b)
                 except AssemblyError:
                     fresh = b
@@ -473,7 +484,7 @@ def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
                         f"expected {res['exp']} frames ({b['itogo']}s), got {res['got']}",
                         to_console=False)
                 try:
-                    fresh_blocks = parse_blocks(table)
+                    fresh_blocks = parse_blocks(table, header_id=header_id, header_total=header_total)
                     fresh = next((fb for fb in fresh_blocks if fb["time"] == b["time"]), b)
                 except AssemblyError:
                     fresh = b
