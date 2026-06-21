@@ -142,4 +142,31 @@ def copy_to_clipboard(text: str) -> bool:
         return False
 
 
+def notify_windows(title: str, body: str) -> None:
+    """Balloon-tip уведомление через PowerShell. Не блокирует, молча игнорирует ошибки."""
+    import subprocess
+    if os.name != "nt":
+        return
+    t = title.replace("'", "")
+    b = body.replace("'", "")
+    ps = (
+        "Add-Type -AssemblyName System.Windows.Forms; "
+        "$n = New-Object System.Windows.Forms.NotifyIcon; "
+        "$n.Icon = [System.Drawing.SystemIcons]::Information; "
+        "$n.Visible = $true; "
+        f"$n.ShowBalloonTip(8000, '{t}', '{b}', "
+        "[System.Windows.Forms.ToolTipIcon]::Info); "
+        "Start-Sleep -Seconds 9; $n.Dispose()"
+    )
+    try:
+        subprocess.Popen(
+            ["powershell", "-NoProfile", "-NonInteractive",
+             "-WindowStyle", "Hidden", "-Command", ps],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=0x08000000,  # CREATE_NO_WINDOW
+        )
+    except Exception:
+        pass
+
+
 # ======================= АВТО-РЕЖИМ: СБОРКА ЭФИРА =======================

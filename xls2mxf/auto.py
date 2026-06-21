@@ -332,6 +332,13 @@ def run_auto_mode(conf: dict, ddmmyy: str, xlsx_dir: Path, src_dir: Path,
     if workers <= 0:
         workers = os.cpu_count() or 1
 
+    if workers == 1:
+        log.log("Режим сборки: последовательный (workers=1).")
+        print("[i] Режим сборки: последовательный (workers=1).")
+    else:
+        log.log(f"Режим сборки: параллельный ({workers} воркеров).")
+        print(f"[i] Режим сборки: параллельный ({workers} воркеров).")
+
     def build_one(b):
         """Собирает один блок. Возвращает dict с результатом.
         Не задаёт вопросов — годится и для параллельного, и для последовательного."""

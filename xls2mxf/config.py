@@ -30,6 +30,10 @@ def load_conf() -> dict:
     if not conf_path.exists():
         conf_path.write_text(DEFAULT_CONF, encoding="utf-8")
         print(f"[i] Создан {conf_path.name} со значениями по умолчанию.")
+        print( "[i] Сборка блоков работает ПОСЛЕДОВАТЕЛЬНО (workers=1).")
+        print( "    Это безопасный режим: ошибки останавливают сборку и спрашивают.")
+        print(f"    Для параллельной сборки задайте workers=N в [{conf_path.name}], секция [assembly].")
+        print()
     cp = configparser.ConfigParser()
     cp.read(conf_path, encoding="utf-8")
     p = cp["paths"] if cp.has_section("paths") else {}
