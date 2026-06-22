@@ -4,10 +4,12 @@ BUILDING xls2mxf.exe (Windows 10+)
 1. Install Python from https://www.python.org/downloads/
    IMPORTANT: check "Add Python to PATH" during installation.
 
-2. Double-click build.bat.
-   It will install pyinstaller and openpyxl automatically, then build the exe.
+2a. For a development build — double-click build.bat.
+    The finished xls2mxf.exe will appear in the dist\ folder.
 
-3. The finished xls2mxf.exe will appear in the dist\ folder.
+2b. For a release build — double-click release.bat.
+    Reads the version from xls2mxf/__init__.py, builds the exe, and packages it
+    into releases\xls2mxf_v{VERSION}\ plus a zip archive alongside it.
 
 4. Copy xls2mxf.exe from dist\ to wherever you need it.
    Place next to it:
