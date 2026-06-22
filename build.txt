@@ -21,6 +21,28 @@ USAGE
   xls2mxf.exe --mode auto --date 170626     — auto-assemble broadcast blocks
   xls2mxf.exe --mode manual --date 170626   — copy clips to folder
 
+BUILDING ON LINUX
+=================
+  chmod +x build_linux.sh
+  ./build_linux.sh
+
+  The finished xls2mxf binary will appear in the dist/ folder.
+  Copy it wherever needed and place xls2mxf.conf next to it.
+  ffmpeg and ffprobe must be in PATH or placed next to the binary.
+
+BUILDING ON macOS
+=================
+  chmod +x build_mac.sh
+  ./build_mac.sh
+
+  The finished xls2mxf binary will appear in the dist/ folder.
+  Copy it wherever needed and place xls2mxf.conf next to it.
+  Install ffmpeg via Homebrew (brew install ffmpeg) or place it next to the binary.
+
+  Note: macOS may block unsigned binaries on first run.
+  If you see a security warning, go to:
+    System Settings -> Privacy & Security -> Allow Anyway
+
 See the docs\ folder for details:
   README.md        — overview and quick start
   CONFIG.md        — all conf parameters

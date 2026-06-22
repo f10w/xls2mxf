@@ -3,6 +3,7 @@ import argparse
 import datetime as dt
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -13,6 +14,16 @@ from .ui import (Logger, Progress, _red, parse_ddmmyy, ask_date, ask_mode,
                  copy_to_clipboard, notify_windows)
 from .tables import find_xlsx_for_date, extract_ids, read_id_column_raw
 from .auto import run_auto_mode, run_dry_check
+
+
+def _open_folder(path: Path) -> None:
+    """Opens a folder in the native file manager (Windows, macOS, Linux)."""
+    if os.name == "nt":
+        os.startfile(path)
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", str(path)])
+    else:
+        subprocess.Popen(["xdg-open", str(path)])
 
 
 def main() -> int:
@@ -29,7 +40,7 @@ def main() -> int:
     ap.add_argument("--doctor", action="store_true",
                     help="configuration diagnostics: paths, ffmpeg, wrappers.")
     ap.add_argument("--open", action="store_true",
-                    help="open the output folder in Explorer after successful assembly.")
+                    help="open the output folder in the file manager after successful assembly.")
     ap.add_argument("--xlsx", default=conf["xlsx"])
     ap.add_argument("--src", default=conf["src"])
     ap.add_argument("--dst", default=conf["dst"])
@@ -144,7 +155,7 @@ def main() -> int:
                     out_base = Path(conf["output_dir"]) if conf["output_dir"] else dst_root
                     out_dir = out_base / f"broadcast {ddmmyy}"
                     if out_dir.is_dir():
-                        os.startfile(out_dir)
+                        _open_folder(out_dir)
             else:
                 notify_windows("xls2mxf — error", f"Assembly for {ddmmyy}: errors found (see log).")
             return rc
